@@ -17,14 +17,14 @@ VERSION=0.1.0
 all: build
 
 
-build:
+build: install_deps
 	@mkdir -p build && \
 		cd build && \
 		cmake -GXcode .. && \
 		cmake --build . --config '$(CONFIG)' && \
 		cmake --install . --config '$(CONFIG)'
 
-universal:
+universal: install_deps
 	@mkdir -p build && \
 		cd build && \
 		cmake -GXcode -DC74_BUILD_FAT=ON .. && \

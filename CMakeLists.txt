@@ -10,6 +10,14 @@ project(${THIS_FOLDER_NAME})
 option(ENABLE_HOMEBREW "Build using Homebrew dependencies")
 option(BUILD_UNIVERSAL "Build Universal Externals")
 
+
+# general locations
+set(THIRDPARTY_INSTALL ${CMAKE_BINARY_DIR}/thirdparty/install)
+set(THIRDPARTY_INCLUDE ${THIRDPARTY_INSTALL}/include)
+set(THIRDPARTY_LIB ${THIRDPARTY_INSTALL}/lib)
+
+
+
 # use ccache if available
 find_program(CCACHE_PROGRAM ccache)
 if(CCACHE_PROGRAM)
