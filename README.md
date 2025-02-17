@@ -4,7 +4,7 @@ This is a Max package for prototyping data-related Max externals. It currently h
 
 - **xlsxw** - uses [libxlsxwriter](https://github.com/jmcnamara/libxlsxwriter) to generate `.xlsx` files (working)
 
-- **matplotx** - tries to use [matplotplusplus](https://github.com/alandefreitas/matplotplusplus) to generate static plots (currently not working)
+- **matplotx** - tries to use [matplotplusplus](https://github.com/alandefreitas/matplotplusplus) to generate static plots (currently not working, and probably won't work until [this](https://github.com/alandefreitas/matplotplusplus/discussions/445) happens.)
 
 ## Building
 
