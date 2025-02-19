@@ -1,10 +1,22 @@
 # data-max - data-related Max external(s)
 
-This is a Max package for prototyping data-related Max externals. It currently has two subprojects:
+This is an exploratory Max project for prototyping data-related Max externals.
+
+The current task is to research relevant external libraries, which should be largely self-contained with minimal external dependencies and test how to build them and whether they are suitable to be incorporated into a useful Max external.
+
+Tests are created in the `data-max/source/tests` folder, these include tests for 
+
+- [eigen](https://eigen.tuxfamily.org) - C++ template library for linear algebra: matrices, vectors, numerical solvers, and related algorithms
+
+- [numcpp](https://github.com/dpilger26/NumCpp) - C++ implementation of the Python Numpy library
+
+
+Additionally, a few proof-of-concept externals were created with the following libraries:
 
 - **xlsxw** - uses [libxlsxwriter](https://github.com/jmcnamara/libxlsxwriter) to generate `.xlsx` files (working)
 
 - **matplotx** - tries to use [matplotplusplus](https://github.com/alandefreitas/matplotplusplus) to generate static plots (currently not working, and probably won't work until [this](https://github.com/alandefreitas/matplotplusplus/discussions/445) happens.)
+
 
 ## Building
 
@@ -31,6 +43,8 @@ make setup
 - [ndarray](https://github.com/ndarray/ndarray) - NumPy-compatible multidimensional arrays in C++
 
 - [numcpp](https://github.com/dpilger26/NumCpp) - C++ implementation of the Python Numpy library
+
+- [xtensor](https://github.com/xtensor-stack/xtensor) - C++ tensors with broadcasting and lazy computing
 
 - [stdlib](https://github.com/stdlib-js/stdlib) - Standard numerical computation library for JavaScript and Node.js
 

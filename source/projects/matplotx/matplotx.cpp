@@ -128,7 +128,7 @@ void matplotx_plot(t_matplotx* x) {
 }
 
 void matplotx_bang(t_matplotx* x) {
-    matplotx_plot(x);
+    matplotx_plot(x); // <- doesn't worked
     outlet_bang(x->outlet); 
 }
 
