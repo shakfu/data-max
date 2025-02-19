@@ -1,6 +1,6 @@
 # data-max - data-related Max external(s)
 
-This is an exploratory Max project for prototyping data-related Max externals.
+This is an early-stage exploratory Max project for prototyping data-related Max externals.
 
 The current task is to research relevant external libraries, which should be largely self-contained with minimal external dependencies and test how to build them and whether they are suitable to be incorporated into a useful Max external.
 
