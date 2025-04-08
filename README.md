@@ -11,11 +11,9 @@ Tests are created in the `data-max/source/tests` folder, these include tests for
 - [numcpp](https://github.com/dpilger26/NumCpp) - C++ implementation of the Python Numpy library
 
 
-Additionally, a few proof-of-concept externals were created with the following libraries:
+Additionally, the following proof-of-concept externals were created with the following libraries:
 
 - **xlsxw** - uses [libxlsxwriter](https://github.com/jmcnamara/libxlsxwriter) to generate `.xlsx` files (working)
-
-- **matplotx** - tries to use [matplotplusplus](https://github.com/alandefreitas/matplotplusplus) to generate static plots (currently not working, and probably won't work until [this](https://github.com/alandefreitas/matplotplusplus/discussions/445) happens.)
 
 
 ## Building

@@ -20,14 +20,19 @@ all: build
 build: install_deps
 	@mkdir -p build && \
 		cd build && \
-		cmake -GXcode .. && \
+		cmake -GXcode ..  \
+			-DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+			&& \
 		cmake --build . --config '$(CONFIG)' && \
 		cmake --install . --config '$(CONFIG)'
 
 universal: install_deps
 	@mkdir -p build && \
 		cd build && \
-		cmake -GXcode -DC74_BUILD_FAT=ON .. && \
+		cmake -GXcode ..  \
+			-DC74_BUILD_FAT=ON \
+			-DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+			&& \
 		cmake --build . --config '$(CONFIG)' && \
 		cmake --install . --config '$(CONFIG)'
 
