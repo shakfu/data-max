@@ -4,7 +4,7 @@ CWD=`pwd`
 THIRDPARTY=${CWD}/build/thirdparty
 PREFIX=${THIRDPARTY}/install
 LIBXLSXWRITER_VERSION=v1.2.0
-MATPLOTPLUSPLUS_VERSION=v1.2.2
+LIBOPENXLSX_VERSION=v0.3.2
 
 function setup() {
 	mkdir -p ${PREFIX}/include && \
@@ -43,7 +43,37 @@ function install_libxlsxwriter() {
 	fi
 }
 
+function install_openxlsx() {
+	VERSION=${LIBOPENXLSX_VERSION}
+	REPO=https://github.com/troldal/OpenXLSX.git
+	SRC=${THIRDPARTY}/OpenXLSX
+	BUILD=${SRC}/build
+    if [ ! -f ${THIRDPARTY}/install/lib/libOpenXLSX.a ]; then
+    	rm -rf ${THIRDPARTY}/OpenXLSX && \
+    	mkdir -p build/thirdparty && \
+		git clone --depth=1 ${REPO} ${SRC} && \
+		mkdir -p ${BUILD} && \
+		cd ${BUILD} && \
+		cmake .. \
+			-DOPENXLSX_CREATE_DOCS=OFF \
+			-DOPENXLSX_BUILD_SAMPLES=OFF \
+			-DOPENXLSX_BUILD_TESTS=OFF \
+			-DOPENXLSX_BUILD_BENCHMARKS=OFF \
+			-DOPENXLSX_ENABLE_LIBZIP=OFF \
+			-DCMAKE_INSTALL_PREFIX=${PREFIX} \
+			-DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+			&& \
+		cmake --build . --config Release && \
+		cmake --build . --target install
+	else
+		echo "libOpenXLSX.a already built"
+	fi
+}
+
 
 
 setup && \
-	install_libxlsxwriter 
+	install_libxlsxwriter && \
+	install_openxlsx
+
+
