@@ -74,6 +74,10 @@ ENDMACRO()
 # Generate a project for every folder in the "source/category" folder
 SUBDIRLIST(CATEGORY_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/source)
 foreach (cat_dir ${CATEGORY_DIRS})
+  # Skip thirdparty -- vendored libraries are compiled directly into targets
+  if ("${cat_dir}" STREQUAL "thirdparty")
+    continue()
+  endif ()
   SUBDIRLIST(PROJECT_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/source/${cat_dir})
   foreach (project_dir ${PROJECT_DIRS})
     set(project_path ${CMAKE_CURRENT_SOURCE_DIR}/source/${cat_dir}/${project_dir})

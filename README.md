@@ -1,56 +1,64 @@
-# data-max - data-related Max external(s)
+# data-max
 
-This is an early-stage exploratory Max project for prototyping data-related Max externals.
+A [Max](https://cycling74.com/products/max) package providing data-oriented externals for tabular data manipulation, spreadsheet I/O, and numerical computation.
 
-The current task is to research relevant external libraries, which should be largely self-contained with minimal external dependencies and test how to build them and whether they are suitable to be incorporated into a useful Max external.
+## Externals
 
-Tests are created in the `data-max/source/tests` folder, these include tests for 
+### dataframe
 
-- [eigen](https://eigen.tuxfamily.org) - C++ template library for linear algebra: matrices, vectors, numerical solvers, and related algorithms
+Pandas-like columnar data manipulation in Max. Uses named instances (like `coll` and `buffer~`) so multiple objects sharing a name share the same data.
 
-- [numcpp](https://github.com/dpilger26/NumCpp) - C++ implementation of the Python Numpy library
+**Supported column types:** double, long, string (auto-detected on CSV import).
 
+| Category | Messages | Description |
+|---|---|---|
+| I/O | `read <file>`, `write <file>`, `clear` | Read/write plain CSV or JSON. File lookup uses the Max search path. |
+| Inspection | `bang`, `columns`, `shape`, `head <n>`, `tail <n>`, `getcol <col>` | Query structure and contents. |
+| Statistics | `mean <col>`, `median <col>`, `std <col>`, `var <col>`, `sum <col>`, `min <col>`, `max <col>`, `count <col>`, `describe <col>` | Descriptive statistics on numeric columns. |
+| Filtering | `sel <col> <op> <value>` | Filter rows in-place. Operators: `>`, `<`, `>=`, `<=`, `==`, `!=`. |
 
-Additionally, the following proof-of-concept externals were created with the following libraries:
+**Outlets:** left = data (lists, floats, symbols), right = info (bang on completion, shape, errors).
 
-- **xlsxw** - uses [libxlsxwriter](https://github.com/jmcnamara/libxlsxwriter) to generate `.xlsx` files (working)
+Built on the [DataFrame](https://github.com/hosseinmoein/DataFrame) C++ library (C++23).
 
+### xlsxw
+
+Write `.xlsx` spreadsheet files from Max. Built on [libxlsxwriter](https://github.com/jmcnamara/libxlsxwriter).
 
 ## Building
 
-Development is being done on an M1 Macbook Air. To build for  macos `arm64`:
+Requires Xcode command line tools on macOS (arm64 or x86_64).
 
 ```sh
-make
+make setup    # init submodules, symlink package into Max 9
+make          # build all externals and tests
 ```
 
+The build installs third-party dependencies automatically, produces `.mxo` bundles in `externals/`, and compiles standalone tests in `build/tests/`.
 
-To make install this project into Max either copy it into `~/Documents/Max 9/Packages`, or better still, run the following to symlink this package to `~/Documents/Max 9/Packages`
+## Project Structure
 
-```sh
-make setup
+```
+source/
+  projects/
+    dataframe/      # dataframe external
+    xlsxw/          # xlsx writer external
+  tests/
+    test_dataframe/ # DataFrame library integration test
+  thirdparty/
+    DataFrame/      # vendored DataFrame library (C++23)
+  max-sdk-base/     # Max SDK (git submodule)
+examples/
+  sample.csv        # sample data for testing
+help/
+  dataframe.maxhelp # help patch for dataframe
+  xlsxw.maxhelp     # help patch for xlsxw
 ```
 
+## Third-Party Libraries
 
-## Research
-
-- [openxlsx](https://github.com/troldal/OpenXLSX) - A C++ library for reading, writing, creating and modifying `.xlsx` files
-
-- [eigen](https://eigen.tuxfamily.org) - C++ template library for linear algebra: matrices, vectors, numerical solvers, and related algorithms
-
-- [ndarray](https://github.com/ndarray/ndarray) - NumPy-compatible multidimensional arrays in C++
-
-- [numcpp](https://github.com/dpilger26/NumCpp) - C++ implementation of the Python Numpy library
-
-- [xtensor](https://github.com/xtensor-stack/xtensor) - C++ tensors with broadcasting and lazy computing
-
-- [stdlib](https://github.com/stdlib-js/stdlib) - Standard numerical computation library for JavaScript and Node.js
-
-- [dataframe](https://github.com/hosseinmoein/DataFrame) - C++ DataFrame for statistical, Financial, and ML analysis -- in modern C++ using native types and contiguous memory storage
-
-- [apache arrow for c++](https://arrow.apache.org/docs/cpp/index.html) - Apache Arrow is a universal columnar format and multi-language toolbox for fast data interchange and in-memory analytics.
-
-- [lunasvg](https://github.com/sammycage/lunasvg) - SVG rendering and manipulation library in C++
-
-
-
+| Library | Purpose | Integration |
+|---|---|---|
+| [DataFrame](https://github.com/hosseinmoein/DataFrame) | Columnar data, statistics, filtering | Vendored, compiled into `dataframe` external |
+| [libxlsxwriter](https://github.com/jmcnamara/libxlsxwriter) | `.xlsx` file writing | Built by `install_deps.sh` |
+| [OpenXLSX](https://github.com/troldal/OpenXLSX) | `.xlsx` file reading | Built by `install_deps.sh` |

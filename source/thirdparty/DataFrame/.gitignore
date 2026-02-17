@@ -1,0 +1,12 @@
+\bin
+\lib
+\obj
+
+\build
+\install
+\Release
+\Debug
+
+#add support for jetbrains IDE
+.idea/
+cmake-build*

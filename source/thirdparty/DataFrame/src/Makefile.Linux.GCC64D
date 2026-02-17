@@ -1,0 +1,29 @@
+## Hossein Moein
+## September 12 2017
+
+BUILD_PLATFORM = Linux.GCC64D
+BUILD_DEFINE = Linux_GCC64
+
+# -----------------------------------------------------------------------------
+
+CXX = /usr/local/bin/g++-15
+# CXX = /usr/bin/g++
+
+INCLUDES =
+
+LFLAGS =
+## CXXFLAGS = -g1 $(INCLUDES) $(DEFINES) -D_GLIBCXX_DEBUG -DHMDF_SANITY_EXCEPTIONS -Wno-implicit-fallthrough -pedantic -Wall -Wextra -std=c++23 -fsanitize=address,undefined
+CXXFLAGS = -g1 $(INCLUDES) $(DEFINES) -D_GLIBCXX_DEBUG -DHMDF_SANITY_EXCEPTIONS -Wno-implicit-fallthrough -pedantic -Wall -Wextra -std=c++23
+
+PLATFORM_LIBS = -lpthread -ldl -lm -lstdc++ -fsanitize-address-use-after-scope
+
+# -----------------------------------------------------------------------------
+
+include CommonMakefile.mk
+
+# -----------------------------------------------------------------------------
+
+## Local Variables:
+## mode:Makefile
+## tab-width:4
+## End:
