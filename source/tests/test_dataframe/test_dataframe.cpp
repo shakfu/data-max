@@ -10,6 +10,7 @@ extern "C" {
 #include <cmath>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -478,6 +479,480 @@ static void test_xlsx_to_dataframe() {
     std::cout << "PASSED" << std::endl;
 }
 
+static void test_fill_missing_forward() {
+    std::cout << "test_fill_missing_forward... ";
+
+    ULDataFrame df;
+    std::vector<unsigned long> idx = {0, 1, 2, 3, 4};
+    std::vector<double> vals = {1.0, std::numeric_limits<double>::quiet_NaN(),
+                                3.0, std::numeric_limits<double>::quiet_NaN(), 5.0};
+
+    df.load_index(std::move(idx));
+    df.load_column("v", std::move(vals));
+
+    ULDataFrame::StlVecType<const char *> col_names = {"v"};
+    df.fill_missing<double>(col_names, fill_policy::fill_forward);
+
+    auto &filled = df.get_column<double>("v");
+    assert(approx(filled[0], 1.0));
+    assert(approx(filled[1], 1.0));  // forward-filled from index 0
+    assert(approx(filled[2], 3.0));
+    assert(approx(filled[3], 3.0));  // forward-filled from index 2
+    assert(approx(filled[4], 5.0));
+
+    std::cout << "PASSED" << std::endl;
+}
+
+static void test_fill_missing_backward() {
+    std::cout << "test_fill_missing_backward... ";
+
+    ULDataFrame df;
+    std::vector<unsigned long> idx = {0, 1, 2, 3, 4};
+    std::vector<double> vals = {1.0, std::numeric_limits<double>::quiet_NaN(),
+                                3.0, std::numeric_limits<double>::quiet_NaN(), 5.0};
+
+    df.load_index(std::move(idx));
+    df.load_column("v", std::move(vals));
+
+    ULDataFrame::StlVecType<const char *> col_names = {"v"};
+    df.fill_missing<double>(col_names, fill_policy::fill_backward);
+
+    auto &filled = df.get_column<double>("v");
+    assert(approx(filled[0], 1.0));
+    assert(approx(filled[1], 3.0));  // backward-filled from index 2
+    assert(approx(filled[2], 3.0));
+    assert(approx(filled[3], 5.0));  // backward-filled from index 4
+    assert(approx(filled[4], 5.0));
+
+    std::cout << "PASSED" << std::endl;
+}
+
+static void test_fill_missing_value() {
+    std::cout << "test_fill_missing_value... ";
+
+    ULDataFrame df;
+    std::vector<unsigned long> idx = {0, 1, 2};
+    std::vector<double> vals = {std::numeric_limits<double>::quiet_NaN(),
+                                10.0,
+                                std::numeric_limits<double>::quiet_NaN()};
+
+    df.load_index(std::move(idx));
+    df.load_column("v", std::move(vals));
+
+    ULDataFrame::StlVecType<const char *> col_names = {"v"};
+    ULDataFrame::StlVecType<double> fill_vals = {-1.0};
+    df.fill_missing<double>(col_names, fill_policy::value, fill_vals);
+
+    auto &filled = df.get_column<double>("v");
+    assert(approx(filled[0], -1.0));
+    assert(approx(filled[1], 10.0));
+    assert(approx(filled[2], -1.0));
+
+    std::cout << "PASSED" << std::endl;
+}
+
+static void test_curvefit_linear() {
+    std::cout << "test_curvefit_linear... ";
+
+    // y = 2x + 1
+    ULDataFrame df;
+    std::vector<unsigned long> idx = {0, 1, 2, 3, 4};
+    std::vector<double> x = {1.0, 2.0, 3.0, 4.0, 5.0};
+    std::vector<double> y = {3.0, 5.0, 7.0, 9.0, 11.0};
+
+    df.load_index(std::move(idx));
+    df.load_column("x", std::move(x));
+    df.load_column("y", std::move(y));
+
+    LinearFitVisitor<double, unsigned long> v;
+    df.single_act_visit<double, double>("x", "y", v);
+
+    assert(approx(v.get_slope(), 2.0));
+    assert(approx(v.get_intercept(), 1.0));
+
+    std::cout << "PASSED" << std::endl;
+}
+
+static void test_curvefit_poly() {
+    std::cout << "test_curvefit_poly... ";
+
+    // y = 1 + 2x + 3x^2 => coeffs [1, 2, 3] (degree+1 = 3)
+    ULDataFrame df;
+    std::vector<unsigned long> idx = {0, 1, 2, 3, 4};
+    std::vector<double> x = {0.0, 1.0, 2.0, 3.0, 4.0};
+    std::vector<double> y(5);
+    for (int i = 0; i < 5; i++) {
+        double xi = static_cast<double>(i);
+        y[i] = 1.0 + 2.0 * xi + 3.0 * xi * xi;
+    }
+
+    df.load_index(std::move(idx));
+    df.load_column("x", std::move(x));
+    df.load_column("y", std::move(y));
+
+    PolyFitVisitor<double, unsigned long> v(3);  // degree+1 = 3
+    df.single_act_visit<double, double>("x", "y", v);
+
+    auto &coeffs = v.get_result();
+    assert(coeffs.size() == 3);
+    assert(approx(coeffs[0], 1.0, 1e-4));  // constant
+    assert(approx(coeffs[1], 2.0, 1e-4));  // linear
+    assert(approx(coeffs[2], 3.0, 1e-4));  // quadratic
+
+    std::cout << "PASSED" << std::endl;
+}
+
+static void test_curvefit_exp() {
+    std::cout << "test_curvefit_exp... ";
+
+    // y = exp(0.5 * x) -- ExponentialFitVisitor fits in log-linear space
+    ULDataFrame df;
+    std::vector<unsigned long> idx = {0, 1, 2, 3, 4, 5, 6, 7};
+    std::vector<double> x = {0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0};
+    std::vector<double> y(8);
+    for (int i = 0; i < 8; i++) {
+        y[i] = std::exp(0.5 * x[i]);
+    }
+
+    df.load_index(std::move(idx));
+    df.load_column("x", std::move(x));
+    df.load_column("y", std::move(y));
+
+    ExponentialFitVisitor<double, unsigned long> v;
+    df.single_act_visit<double, double>("x", "y", v);
+
+    // slope should be ~0.5, intercept ~0.0 (since y = exp(0) * exp(0.5*x))
+    assert(approx(v.get_slope(), 0.5, 1e-3));
+    assert(approx(v.get_intercept(), 0.0, 1e-3));
+
+    std::cout << "PASSED" << std::endl;
+}
+
+static void test_curvefit_spline() {
+    std::cout << "test_curvefit_spline... ";
+
+    ULDataFrame df;
+    std::vector<unsigned long> idx = {0, 1, 2, 3, 4};
+    std::vector<double> x = {0.0, 1.0, 2.0, 3.0, 4.0};
+    std::vector<double> y = {0.0, 1.0, 4.0, 9.0, 16.0};
+
+    df.load_index(std::move(idx));
+    df.load_column("x", std::move(x));
+    df.load_column("y", std::move(y));
+
+    CubicSplineFitVisitor<double, unsigned long> v;
+    df.single_act_visit<double, double>("x", "y", v);
+
+    // b-coefficients vector should have same size as data
+    auto &b = v.get_result();
+    assert(b.size() == 5);
+    // b[0] should be the first derivative at x=0 for the spline
+    // Just verify we got non-trivial output
+    bool any_nonzero = false;
+    for (auto val : b) {
+        if (std::abs(val) > 1e-10) { any_nonzero = true; break; }
+    }
+    assert(any_nonzero);
+
+    std::cout << "PASSED" << std::endl;
+}
+
+static void test_apply_arithmetic() {
+    std::cout << "test_apply_arithmetic... ";
+
+    ULDataFrame df;
+    std::vector<unsigned long> idx = {0, 1, 2, 3};
+    std::vector<double> vals = {10.0, 20.0, 30.0, 40.0};
+
+    df.load_index(std::move(idx));
+    df.load_column("v", std::move(vals));
+
+    // Add 5
+    auto &col = df.get_column<double>("v");
+    for (size_t i = 0; i < col.size(); i++) col[i] += 5.0;
+    assert(approx(col[0], 15.0));
+    assert(approx(col[3], 45.0));
+
+    // Multiply by 2
+    for (size_t i = 0; i < col.size(); i++) col[i] *= 2.0;
+    assert(approx(col[0], 30.0));
+    assert(approx(col[3], 90.0));
+
+    // Subtract 10
+    for (size_t i = 0; i < col.size(); i++) col[i] -= 10.0;
+    assert(approx(col[0], 20.0));
+    assert(approx(col[3], 80.0));
+
+    // Divide by 4
+    for (size_t i = 0; i < col.size(); i++) col[i] /= 4.0;
+    assert(approx(col[0], 5.0));
+    assert(approx(col[3], 20.0));
+
+    std::cout << "PASSED" << std::endl;
+}
+
+static void test_xlsx_multi_sheet() {
+    std::cout << "test_xlsx_multi_sheet... ";
+
+    const char *xlsx_path = "/tmp/test_dataframe_multisheet.xlsx";
+
+    // Write a multi-sheet xlsx using libxlsxwriter
+    lxw_workbook *wb = workbook_new(xlsx_path);
+
+    lxw_worksheet *ws1 = workbook_add_worksheet(wb, "Sheet1");
+    worksheet_write_string(ws1, 0, 0, "a", nullptr);
+    worksheet_write_number(ws1, 1, 0, 100, nullptr);
+    worksheet_write_number(ws1, 2, 0, 200, nullptr);
+
+    lxw_worksheet *ws2 = workbook_add_worksheet(wb, "Sheet2");
+    worksheet_write_string(ws2, 0, 0, "b", nullptr);
+    worksheet_write_number(ws2, 1, 0, 999, nullptr);
+    worksheet_write_number(ws2, 2, 0, 888, nullptr);
+
+    lxw_error err = workbook_close(wb);
+    assert(err == LXW_NO_ERROR);
+
+    // Read Sheet1 (default, first sheet)
+    {
+        OpenXLSX::XLDocument doc;
+        doc.open(xlsx_path);
+        auto ws = doc.workbook().worksheet(1);
+        assert(ws.rowCount() == 3);
+        auto c1 = ws.cell(1, 1);
+        assert(c1.value().get<std::string>() == "a");
+        auto c2 = ws.cell(2, 1);
+        assert(approx(c2.value().get<double>(), 100.0));
+        doc.close();
+    }
+
+    // Read Sheet2 by name
+    {
+        OpenXLSX::XLDocument doc;
+        doc.open(xlsx_path);
+        auto ws = doc.workbook().worksheet("Sheet2");
+        assert(ws.rowCount() == 3);
+        auto c1 = ws.cell(1, 1);
+        assert(c1.value().get<std::string>() == "b");
+        auto c2 = ws.cell(2, 1);
+        assert(approx(c2.value().get<double>(), 999.0));
+        doc.close();
+    }
+
+    std::cout << "PASSED" << std::endl;
+}
+
+static void test_curvefit_log() {
+    std::cout << "test_curvefit_log... ";
+
+    // y = 2 + 3*log(x) => LogFit uses PolyFit(1) on (log(x), y)
+    // So coeffs[0] = intercept = 2, coeffs[1] = slope = 3
+    ULDataFrame df;
+    std::vector<unsigned long> idx = {0, 1, 2, 3, 4, 5, 6, 7};
+    std::vector<double> x = {1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0};
+    std::vector<double> y(8);
+    for (int i = 0; i < 8; i++) {
+        y[i] = 2.0 + 3.0 * std::log(x[i]);
+    }
+
+    df.load_index(std::move(idx));
+    df.load_column("x", std::move(x));
+    df.load_column("y", std::move(y));
+
+    LogFitVisitor<double, unsigned long> v;
+    df.single_act_visit<double, double>("x", "y", v);
+
+    auto &coeffs = v.get_result();
+    assert(coeffs.size() == 2);
+    assert(approx(coeffs[0], 2.0, 1e-3));  // intercept
+    assert(approx(coeffs[1], 3.0, 1e-3));  // slope (coefficient of log(x))
+
+    std::cout << "PASSED" << std::endl;
+}
+
+static void test_stats_on_long_columns() {
+    std::cout << "test_stats_on_long_columns... ";
+
+    // Verify that stats visitors work on long data promoted to double
+    ULDataFrame df;
+    std::vector<unsigned long> idx = {0, 1, 2, 3, 4};
+    std::vector<long> ages = {20, 30, 40, 50, 60};
+
+    df.load_index(std::move(idx));
+    df.load_column("age", std::move(ages));
+
+    // Promote to double and compute stats
+    auto &lcol = df.get_column<long>("age");
+    std::vector<double> dcol(lcol.begin(), lcol.end());
+
+    ULDataFrame tmp;
+    std::vector<unsigned long> tidx = {0, 1, 2, 3, 4};
+    tmp.load_index(std::move(tidx));
+    tmp.load_column("age", std::move(dcol));
+
+    MeanVisitor<double, unsigned long> mean_v;
+    tmp.visit<double>("age", mean_v);
+    assert(approx(mean_v.get_result(), 40.0));
+
+    SumVisitor<double, unsigned long> sum_v;
+    tmp.visit<double>("age", sum_v);
+    assert(approx(sum_v.get_result(), 200.0));
+
+    MinVisitor<double, unsigned long> min_v;
+    tmp.visit<double>("age", min_v);
+    assert(approx(min_v.get_result(), 20.0));
+
+    MaxVisitor<double, unsigned long> max_v;
+    tmp.visit<double>("age", max_v);
+    assert(approx(max_v.get_result(), 60.0));
+
+    // Two-column: corr between long and double
+    std::vector<double> scores = {60.0, 70.0, 80.0, 90.0, 100.0};
+    auto &lcol2 = df.get_column<long>("age");
+    std::vector<double> dcol2(lcol2.begin(), lcol2.end());
+
+    ULDataFrame tmp2;
+    std::vector<unsigned long> tidx2 = {0, 1, 2, 3, 4};
+    tmp2.load_index(std::move(tidx2));
+    tmp2.load_column("age", std::move(dcol2));
+    tmp2.load_column("score", std::move(scores));
+
+    CorrVisitor<double, unsigned long> corr_v;
+    tmp2.visit<double, double>("age", "score", corr_v);
+    assert(approx(corr_v.get_result(), 1.0));  // perfect positive correlation
+
+    std::cout << "PASSED" << std::endl;
+}
+
+static void test_melt() {
+    std::cout << "test_melt... ";
+
+    // Wide format: name (string), jan (double), feb (double)
+    ULDataFrame df;
+    std::vector<unsigned long> idx = {0, 1, 2};
+    std::vector<std::string> names = {"Alice", "Bob", "Carol"};
+    std::vector<double> jan = {10.0, 20.0, 30.0};
+    std::vector<double> feb = {40.0, 50.0, 60.0};
+
+    df.load_index(std::move(idx));
+    df.load_column("name", std::move(names));
+    df.load_column("jan", std::move(jan));
+    df.load_column("feb", std::move(feb));
+
+    // Melt on "name", unpivoting jan and feb
+    std::vector<const char *> val_cols = {"jan", "feb"};
+    auto melted = df.unpivot<std::string, double>("name", std::move(val_cols));
+
+    // Should have 6 rows (3 names x 2 value columns)
+    assert(melted.get_index().size() == 6);
+
+    // Columns: name, variable, values
+    auto &m_names = melted.get_column<std::string>("name");
+    auto &m_var = melted.get_column<std::string>("variable");
+    auto &m_vals = melted.get_column<double>("values");
+
+    assert(m_names.size() == 6);
+    assert(m_var.size() == 6);
+    assert(m_vals.size() == 6);
+
+    // First 3 rows should be jan values, next 3 feb values
+    // (or interleaved -- check by matching name+variable pairs)
+    bool found_alice_jan = false;
+    bool found_bob_feb = false;
+    for (size_t i = 0; i < 6; i++) {
+        if (m_names[i] == "Alice" && m_var[i] == "jan") {
+            assert(approx(m_vals[i], 10.0));
+            found_alice_jan = true;
+        }
+        if (m_names[i] == "Bob" && m_var[i] == "feb") {
+            assert(approx(m_vals[i], 50.0));
+            found_bob_feb = true;
+        }
+    }
+    assert(found_alice_jan);
+    assert(found_bob_feb);
+
+    std::cout << "PASSED" << std::endl;
+}
+
+static void test_pivot() {
+    std::cout << "test_pivot... ";
+
+    // Long format: 6 rows, variable column repeating "jan", "feb"
+    ULDataFrame df;
+    std::vector<unsigned long> idx = {0, 1, 2, 3, 4, 5};
+    std::vector<std::string> variable = {"jan", "feb", "jan", "feb", "jan", "feb"};
+    std::vector<double> temp = {10.0, 40.0, 20.0, 50.0, 30.0, 60.0};
+
+    df.load_index(std::move(idx));
+    df.load_column("variable", std::move(variable));
+    df.load_column("temp", std::move(temp));
+
+    // Pivot: variable column becomes new column names, temp is the value
+    std::vector<const char *> val_cols = {"temp"};
+    auto pivoted = df.pivot<double>("variable", std::move(val_cols));
+
+    // Should have 3 rows (6 / 2 repeating values)
+    assert(pivoted.get_index().size() == 3);
+
+    // Should have columns "jan" and "feb"
+    auto &jan_col = pivoted.get_column<double>("jan");
+    auto &feb_col = pivoted.get_column<double>("feb");
+
+    assert(jan_col.size() == 3);
+    assert(feb_col.size() == 3);
+
+    assert(approx(jan_col[0], 10.0));
+    assert(approx(jan_col[1], 20.0));
+    assert(approx(jan_col[2], 30.0));
+    assert(approx(feb_col[0], 40.0));
+    assert(approx(feb_col[1], 50.0));
+    assert(approx(feb_col[2], 60.0));
+
+    std::cout << "PASSED" << std::endl;
+}
+
+static void test_transpose() {
+    std::cout << "test_transpose... ";
+
+    // 3 rows x 2 columns, all double
+    ULDataFrame df;
+    std::vector<unsigned long> idx = {0, 1, 2};
+    std::vector<double> a = {1.0, 2.0, 3.0};
+    std::vector<double> b = {4.0, 5.0, 6.0};
+
+    df.load_index(std::move(idx));
+    df.load_column("a", std::move(a));
+    df.load_column("b", std::move(b));
+
+    // Transpose: 2 rows x 3 columns
+    std::vector<unsigned long> new_idx = {0, 1};
+    std::vector<std::string> new_col_names = {"row_0", "row_1", "row_2"};
+
+    auto transposed = df.transpose<double>(std::move(new_idx), new_col_names);
+
+    assert(transposed.get_index().size() == 2);
+
+    auto &r0 = transposed.get_column<double>("row_0");
+    auto &r1 = transposed.get_column<double>("row_1");
+    auto &r2 = transposed.get_column<double>("row_2");
+
+    assert(r0.size() == 2);
+    assert(r1.size() == 2);
+    assert(r2.size() == 2);
+
+    // Original: a=[1,2,3], b=[4,5,6] (columns sorted alphabetically)
+    // Transposed row 0 = column "a" values: 1, 2, 3
+    // Transposed row 1 = column "b" values: 4, 5, 6
+    assert(approx(r0[0], 1.0));
+    assert(approx(r1[0], 2.0));
+    assert(approx(r2[0], 3.0));
+    assert(approx(r0[1], 4.0));
+    assert(approx(r1[1], 5.0));
+    assert(approx(r2[1], 6.0));
+
+    std::cout << "PASSED" << std::endl;
+}
+
 int main() {
     std::cout << "DataFrame integration tests" << std::endl;
     std::cout << "===========================" << std::endl;
@@ -491,6 +966,20 @@ int main() {
     test_join();
     test_xlsx_write_read_roundtrip();
     test_xlsx_to_dataframe();
+    test_fill_missing_forward();
+    test_fill_missing_backward();
+    test_fill_missing_value();
+    test_curvefit_linear();
+    test_curvefit_poly();
+    test_curvefit_exp();
+    test_curvefit_log();
+    test_curvefit_spline();
+    test_apply_arithmetic();
+    test_xlsx_multi_sheet();
+    test_stats_on_long_columns();
+    test_melt();
+    test_pivot();
+    test_transpose();
 
     std::cout << std::endl;
     std::cout << "All tests passed." << std::endl;

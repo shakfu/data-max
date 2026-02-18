@@ -9,7 +9,7 @@
             "modernui": 1
         },
         "classnamespace": "box",
-        "rect": [ 100.0, 100.0, 853.0, 613.0 ],
+        "rect": [ 100.0, 100.0, 853.0, 740.0 ],
         "boxes": [
             {
                 "box": {
@@ -30,7 +30,7 @@
                     "numinlets": 1,
                     "numoutlets": 0,
                     "patching_rect": [ 110.0, 77.0, 200.0, 20.0 ],
-                    "text": "--- I/O ---"
+                    "text": "I/O"
                 }
             },
             {
@@ -95,7 +95,7 @@
                     "numinlets": 1,
                     "numoutlets": 0,
                     "patching_rect": [ 110.0, 137.0, 200.0, 20.0 ],
-                    "text": "--- Inspection ---"
+                    "text": "Inspection"
                 }
             },
             {
@@ -171,7 +171,7 @@
                     "numinlets": 1,
                     "numoutlets": 0,
                     "patching_rect": [ 110.0, 202.0, 200.0, 20.0 ],
-                    "text": "--- Statistics ---"
+                    "text": "Statistics"
                 }
             },
             {
@@ -269,7 +269,7 @@
                     "numinlets": 1,
                     "numoutlets": 0,
                     "patching_rect": [ 110.0, 267.0, 200.0, 20.0 ],
-                    "text": "--- Filtering & Sorting ---"
+                    "text": "Filtering & Sorting"
                 }
             },
             {
@@ -312,7 +312,7 @@
                     "numinlets": 1,
                     "numoutlets": 0,
                     "patching_rect": [ 110.0, 322.0, 200.0, 20.0 ],
-                    "text": "--- Groupby & Join ---"
+                    "text": "Groupby, Join & More"
                 }
             },
             {
@@ -328,12 +328,142 @@
             },
             {
                 "box": {
-                    "id": "obj-comment-join-syntax",
+                    "id": "obj-join",
+                    "maxclass": "message",
+                    "numinlets": 2,
+                    "numoutlets": 1,
+                    "outlettype": [ "" ],
+                    "patching_rect": [ 295.0, 347.0, 160.0, 22.0 ],
+                    "text": "join other name inner"
+                }
+            },
+            {
+                "box": {
+                    "id": "obj-corr",
+                    "maxclass": "message",
+                    "numinlets": 2,
+                    "numoutlets": 1,
+                    "outlettype": [ "" ],
+                    "patching_rect": [ 470.0, 347.0, 105.0, 22.0 ],
+                    "text": "corr age score"
+                }
+            },
+            {
+                "box": {
+                    "id": "obj-quantile",
+                    "maxclass": "message",
+                    "numinlets": 2,
+                    "numoutlets": 1,
+                    "outlettype": [ "" ],
+                    "patching_rect": [ 590.0, 347.0, 125.0, 22.0 ],
+                    "text": "quantile score 0.25"
+                }
+            },
+            {
+                "box": {
+                    "id": "obj-comment-reshape",
                     "maxclass": "comment",
                     "numinlets": 1,
                     "numoutlets": 0,
-                    "patching_rect": [ 442.5, 348.0, 300.0, 20.0 ],
-                    "text": "join <other_df> <col> [inner|left|right|outer]"
+                    "patching_rect": [ 110.0, 382.0, 200.0, 20.0 ],
+                    "text": "Reshape"
+                }
+            },
+            {
+                "box": {
+                    "id": "obj-melt",
+                    "maxclass": "message",
+                    "numinlets": 2,
+                    "numoutlets": 1,
+                    "outlettype": [ "" ],
+                    "patching_rect": [ 125.0, 407.0, 130.0, 22.0 ],
+                    "text": "melt grade score"
+                }
+            },
+            {
+                "box": {
+                    "id": "obj-pivot",
+                    "maxclass": "message",
+                    "numinlets": 2,
+                    "numoutlets": 1,
+                    "outlettype": [ "" ],
+                    "patching_rect": [ 270.0, 407.0, 140.0, 22.0 ],
+                    "text": "pivot variable values"
+                }
+            },
+            {
+                "box": {
+                    "id": "obj-comment-pivot-note",
+                    "maxclass": "comment",
+                    "numinlets": 1,
+                    "numoutlets": 0,
+                    "patching_rect": [ 270.0, 430.0, 220.0, 20.0 ],
+                    "text": "(click after melt to reverse it)"
+                }
+            },
+            {
+                "box": {
+                    "id": "obj-transpose",
+                    "maxclass": "message",
+                    "numinlets": 2,
+                    "numoutlets": 1,
+                    "outlettype": [ "" ],
+                    "patching_rect": [ 425.0, 407.0, 65.0, 22.0 ],
+                    "text": "transpose"
+                }
+            },
+            {
+                "box": {
+                    "id": "obj-comment-data-manip",
+                    "maxclass": "comment",
+                    "numinlets": 1,
+                    "numoutlets": 0,
+                    "patching_rect": [ 110.0, 442.0, 300.0, 20.0 ],
+                    "text": "Fill, Apply, Curvefit & Dict"
+                }
+            },
+            {
+                "box": {
+                    "id": "obj-fill-missing",
+                    "maxclass": "message",
+                    "numinlets": 2,
+                    "numoutlets": 1,
+                    "outlettype": [ "" ],
+                    "patching_rect": [ 125.0, 467.0, 175.0, 22.0 ],
+                    "text": "fill_missing score forward"
+                }
+            },
+            {
+                "box": {
+                    "id": "obj-apply",
+                    "maxclass": "message",
+                    "numinlets": 2,
+                    "numoutlets": 1,
+                    "outlettype": [ "" ],
+                    "patching_rect": [ 315.0, 467.0, 120.0, 22.0 ],
+                    "text": "apply score * 1.1"
+                }
+            },
+            {
+                "box": {
+                    "id": "obj-curvefit",
+                    "maxclass": "message",
+                    "numinlets": 2,
+                    "numoutlets": 1,
+                    "outlettype": [ "" ],
+                    "patching_rect": [ 450.0, 467.0, 175.0, 22.0 ],
+                    "text": "curvefit linear age score"
+                }
+            },
+            {
+                "box": {
+                    "id": "obj-todict",
+                    "maxclass": "message",
+                    "numinlets": 2,
+                    "numoutlets": 1,
+                    "outlettype": [ "" ],
+                    "patching_rect": [ 640.0, 467.0, 85.0, 22.0 ],
+                    "text": "todict mydict"
                 }
             },
             {
@@ -343,7 +473,7 @@
                     "numinlets": 1,
                     "numoutlets": 2,
                     "outlettype": [ "", "" ],
-                    "patching_rect": [ 295.0, 407.0, 273.0, 22.0 ],
+                    "patching_rect": [ 295.0, 527.0, 273.0, 22.0 ],
                     "text": "dataframe mydata"
                 }
             },
@@ -354,7 +484,7 @@
                     "numinlets": 2,
                     "numoutlets": 1,
                     "outlettype": [ "" ],
-                    "patching_rect": [ 133.0, 502.0, 181.0, 22.0 ]
+                    "patching_rect": [ 133.0, 622.0, 181.0, 22.0 ]
                 }
             },
             {
@@ -364,7 +494,7 @@
                     "numinlets": 2,
                     "numoutlets": 1,
                     "outlettype": [ "" ],
-                    "patching_rect": [ 385.0, 502.0, 183.0, 22.0 ],
+                    "patching_rect": [ 385.0, 622.0, 183.0, 22.0 ],
                     "text": "bang"
                 }
             },
@@ -375,7 +505,7 @@
                     "numinlets": 1,
                     "numoutlets": 1,
                     "outlettype": [ "bang" ],
-                    "patching_rect": [ 133.0, 442.0, 58.0, 22.0 ],
+                    "patching_rect": [ 133.0, 562.0, 58.0, 22.0 ],
                     "text": "loadbang"
                 }
             },
@@ -386,7 +516,7 @@
                     "numinlets": 2,
                     "numoutlets": 1,
                     "outlettype": [ "" ],
-                    "patching_rect": [ 133.0, 474.0, 29.5, 22.0 ],
+                    "patching_rect": [ 133.0, 594.0, 29.5, 22.0 ],
                     "text": "set"
                 }
             },
@@ -397,7 +527,7 @@
                     "numinlets": 2,
                     "numoutlets": 1,
                     "outlettype": [ "" ],
-                    "patching_rect": [ 385.0, 472.0, 29.5, 22.0 ],
+                    "patching_rect": [ 385.0, 592.0, 29.5, 22.0 ],
                     "text": "set"
                 }
             },
@@ -408,7 +538,7 @@
                     "numinlets": 1,
                     "numoutlets": 1,
                     "outlettype": [ "bang" ],
-                    "patching_rect": [ 385.0, 442.0, 58.0, 22.0 ],
+                    "patching_rect": [ 385.0, 562.0, 58.0, 22.0 ],
                     "text": "loadbang"
                 }
             },
@@ -418,7 +548,7 @@
                     "maxclass": "comment",
                     "numinlets": 1,
                     "numoutlets": 0,
-                    "patching_rect": [ 133.0, 534.0, 150.0, 20.0 ],
+                    "patching_rect": [ 133.0, 654.0, 150.0, 20.0 ],
                     "text": "data outlet (left)"
                 }
             },
@@ -428,7 +558,7 @@
                     "maxclass": "comment",
                     "numinlets": 1,
                     "numoutlets": 0,
-                    "patching_rect": [ 385.0, 532.0, 150.0, 20.0 ],
+                    "patching_rect": [ 385.0, 654.0, 150.0, 20.0 ],
                     "text": "info outlet (right)"
                 }
             }
@@ -437,30 +567,56 @@
             {
                 "patchline": {
                     "destination": [ "obj-df", 0 ],
+                    "hidden": 1,
+                    "source": [ "obj-apply", 0 ]
+                }
+            },
+            {
+                "patchline": {
+                    "destination": [ "obj-df", 0 ],
+                    "hidden": 1,
                     "source": [ "obj-bang", 0 ]
                 }
             },
             {
                 "patchline": {
                     "destination": [ "obj-df", 0 ],
+                    "hidden": 1,
                     "source": [ "obj-clear", 0 ]
                 }
             },
             {
                 "patchline": {
                     "destination": [ "obj-df", 0 ],
+                    "hidden": 1,
                     "source": [ "obj-columns", 0 ]
                 }
             },
             {
                 "patchline": {
                     "destination": [ "obj-df", 0 ],
+                    "hidden": 1,
+                    "source": [ "obj-corr", 0 ]
+                }
+            },
+            {
+                "patchline": {
+                    "destination": [ "obj-df", 0 ],
+                    "hidden": 1,
                     "source": [ "obj-count", 0 ]
                 }
             },
             {
                 "patchline": {
                     "destination": [ "obj-df", 0 ],
+                    "hidden": 1,
+                    "source": [ "obj-curvefit", 0 ]
+                }
+            },
+            {
+                "patchline": {
+                    "destination": [ "obj-df", 0 ],
+                    "hidden": 1,
                     "source": [ "obj-describe", 0 ]
                 }
             },
@@ -479,19 +635,36 @@
             {
                 "patchline": {
                     "destination": [ "obj-df", 0 ],
+                    "hidden": 1,
+                    "source": [ "obj-fill-missing", 0 ]
+                }
+            },
+            {
+                "patchline": {
+                    "destination": [ "obj-df", 0 ],
+                    "hidden": 1,
                     "source": [ "obj-getcol", 0 ]
                 }
             },
             {
                 "patchline": {
                     "destination": [ "obj-df", 0 ],
+                    "hidden": 1,
                     "source": [ "obj-groupby", 0 ]
                 }
             },
             {
                 "patchline": {
                     "destination": [ "obj-df", 0 ],
+                    "hidden": 1,
                     "source": [ "obj-head", 0 ]
+                }
+            },
+            {
+                "patchline": {
+                    "destination": [ "obj-df", 0 ],
+                    "hidden": 1,
+                    "source": [ "obj-join", 0 ]
                 }
             },
             {
@@ -509,42 +682,70 @@
             {
                 "patchline": {
                     "destination": [ "obj-df", 0 ],
+                    "hidden": 1,
                     "source": [ "obj-max", 0 ]
                 }
             },
             {
                 "patchline": {
                     "destination": [ "obj-df", 0 ],
+                    "hidden": 1,
                     "source": [ "obj-mean", 0 ]
                 }
             },
             {
                 "patchline": {
                     "destination": [ "obj-df", 0 ],
+                    "hidden": 1,
                     "source": [ "obj-median", 0 ]
                 }
             },
             {
                 "patchline": {
                     "destination": [ "obj-df", 0 ],
+                    "hidden": 1,
+                    "source": [ "obj-melt", 0 ]
+                }
+            },
+            {
+                "patchline": {
+                    "destination": [ "obj-df", 0 ],
+                    "hidden": 1,
                     "source": [ "obj-min", 0 ]
                 }
             },
             {
                 "patchline": {
                     "destination": [ "obj-df", 0 ],
+                    "hidden": 1,
+                    "source": [ "obj-pivot", 0 ]
+                }
+            },
+            {
+                "patchline": {
+                    "destination": [ "obj-df", 0 ],
+                    "hidden": 1,
+                    "source": [ "obj-quantile", 0 ]
+                }
+            },
+            {
+                "patchline": {
+                    "destination": [ "obj-df", 0 ],
+                    "hidden": 1,
                     "source": [ "obj-read", 0 ]
                 }
             },
             {
                 "patchline": {
                     "destination": [ "obj-df", 0 ],
+                    "hidden": 1,
                     "source": [ "obj-read-xlsx", 0 ]
                 }
             },
             {
                 "patchline": {
                     "destination": [ "obj-df", 0 ],
+                    "hidden": 1,
                     "source": [ "obj-sel", 0 ]
                 }
             },
@@ -563,48 +764,70 @@
             {
                 "patchline": {
                     "destination": [ "obj-df", 0 ],
+                    "hidden": 1,
                     "source": [ "obj-shape", 0 ]
                 }
             },
             {
                 "patchline": {
                     "destination": [ "obj-df", 0 ],
+                    "hidden": 1,
                     "source": [ "obj-sort-asc", 0 ]
                 }
             },
             {
                 "patchline": {
                     "destination": [ "obj-df", 0 ],
+                    "hidden": 1,
                     "source": [ "obj-sort-desc", 0 ]
                 }
             },
             {
                 "patchline": {
                     "destination": [ "obj-df", 0 ],
+                    "hidden": 1,
                     "source": [ "obj-std", 0 ]
                 }
             },
             {
                 "patchline": {
                     "destination": [ "obj-df", 0 ],
+                    "hidden": 1,
                     "source": [ "obj-sum", 0 ]
                 }
             },
             {
                 "patchline": {
                     "destination": [ "obj-df", 0 ],
+                    "hidden": 1,
                     "source": [ "obj-tail", 0 ]
                 }
             },
             {
                 "patchline": {
                     "destination": [ "obj-df", 0 ],
+                    "hidden": 1,
+                    "source": [ "obj-todict", 0 ]
+                }
+            },
+            {
+                "patchline": {
+                    "destination": [ "obj-df", 0 ],
+                    "hidden": 1,
+                    "source": [ "obj-transpose", 0 ]
+                }
+            },
+            {
+                "patchline": {
+                    "destination": [ "obj-df", 0 ],
+                    "hidden": 1,
                     "source": [ "obj-write", 0 ]
                 }
             },
             {
                 "patchline": {
                     "destination": [ "obj-df", 0 ],
+                    "hidden": 1,
                     "source": [ "obj-write-xlsx", 0 ]
                 }
             }

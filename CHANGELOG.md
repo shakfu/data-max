@@ -15,6 +15,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+### Added
+
+- `corr <col1> <col2>` message for Pearson correlation between two numeric columns
+- `quantile <col> <value>` message for arbitrary quantile queries (value in [0.0, 1.0])
+- Multi-sheet XLSX: `read <file> [sheet]` accepts an optional sheet name
+- `fill_missing <col> <policy> [value]` message for filling NaN/missing values (forward, backward, value, linear, midpoint)
+- `curvefit <type> <x_col> <y_col> [degree]` message for curve fitting (linear, poly, exp, log, spline); outputs coefficients as list
+- `apply <col> <op> <value>` message for in-place arithmetic on a column (+, -, *, /)
+- `todict [name]` message to export DataFrame as a Max dict
+- `melt <id_col> [val_col1 ...]` message for wide-to-long reshape (unpivot)
+- `pivot <names_col> <val_col1> [val_col2 ...]` message for long-to-wide reshape
+- `transpose` message to transpose an all-double DataFrame
+
+### Changed
+
+- Statistics functions (`mean`, `median`, `std`, `var`, `sum`, `min`, `max`, `describe`, `corr`, `quantile`, `curvefit`) now accept both `double` and `long` columns; long values are promoted to double transparently
+- `read` and `write` now run on a background thread (systhread + defer_low), keeping the Max scheduler responsive during file I/O
+- Removed legacy synchronous `read_plain_csv`, `write_plain_csv`, `read_xlsx`, `write_xlsx` functions superseded by threaded I/O
+
 ## [0.1.2]
 
 ### Added

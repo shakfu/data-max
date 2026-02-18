@@ -5,6 +5,9 @@
 extern "C" {
 #include "ext.h"
 #include "ext_obex.h"
+#include "ext_systhread.h"
+#include "ext_dictionary.h"
+#include "ext_dictobj.h"
 }
 
 #include <DataFrame/DataFrame.h>
@@ -46,7 +49,22 @@ typedef struct _dataframe {
     void *outlet_info;
     t_symbol *name;
     std::shared_ptr<DataFrameStore> store;
+    t_systhread thread;
 } t_dataframe;
+
+// Async I/O args for threaded read/write
+struct AsyncIOArgs {
+    t_dataframe *x;
+    std::string filename;      // original name for messages
+    std::string path;          // resolved absolute path
+    std::string sheet;         // for xlsx read
+    bool is_write;
+    // Filled by worker (read only):
+    ULDataFrame df;
+    std::unordered_map<std::string, col_type> col_types;
+    bool ok;
+    std::string error_msg;
+};
 
 // Globals
 static t_class *dataframe_class = nullptr;
@@ -60,7 +78,7 @@ static void dataframe_free(t_dataframe *x);
 static void dataframe_assist(t_dataframe *x, void *b, long m, long a, char *s);
 
 // I/O
-static void dataframe_read(t_dataframe *x, t_symbol *s);
+static void dataframe_read(t_dataframe *x, t_symbol *s, long argc, t_atom *argv);
 static void dataframe_write(t_dataframe *x, t_symbol *s);
 static void dataframe_clear(t_dataframe *x);
 
@@ -82,6 +100,8 @@ static void dataframe_sum(t_dataframe *x, t_symbol *s);
 static void dataframe_min(t_dataframe *x, t_symbol *s);
 static void dataframe_max(t_dataframe *x, t_symbol *s);
 static void dataframe_count(t_dataframe *x, t_symbol *s);
+static void dataframe_corr(t_dataframe *x, t_symbol *s, long argc, t_atom *argv);
+static void dataframe_quantile(t_dataframe *x, t_symbol *s, long argc, t_atom *argv);
 
 // Filtering
 static void dataframe_sel(t_dataframe *x, t_symbol *s, long argc, t_atom *argv);
@@ -94,6 +114,19 @@ static void dataframe_groupby(t_dataframe *x, t_symbol *s, long argc, t_atom *ar
 
 // Join
 static void dataframe_join(t_dataframe *x, t_symbol *s, long argc, t_atom *argv);
+
+// Data manipulation
+static void dataframe_fill_missing(t_dataframe *x, t_symbol *s, long argc, t_atom *argv);
+static void dataframe_curvefit(t_dataframe *x, t_symbol *s, long argc, t_atom *argv);
+static void dataframe_apply(t_dataframe *x, t_symbol *s, long argc, t_atom *argv);
+
+// Reshape
+static void dataframe_melt(t_dataframe *x, t_symbol *s, long argc, t_atom *argv);
+static void dataframe_pivot(t_dataframe *x, t_symbol *s, long argc, t_atom *argv);
+static void dataframe_transpose(t_dataframe *x, t_symbol *s, long argc, t_atom *argv);
+
+// Dict interop
+static void dataframe_todict(t_dataframe *x, t_symbol *s, long argc, t_atom *argv);
 
 // --------------------------------------------------------------------------
 // Helpers
@@ -263,336 +296,6 @@ static col_type detect_value_type(const std::string &val) {
     return col_type::STRING;
 }
 
-// Read a plain CSV file into the DataFrame.
-static bool read_plain_csv(t_dataframe *x, const std::string &path) {
-    std::ifstream file(path);
-    if (!file.is_open()) return false;
-
-    std::string line;
-
-    // Read header
-    if (!std::getline(file, line)) return false;
-    auto headers = split_csv_line(line);
-    size_t ncols = headers.size();
-    for (auto &h : headers) h = trim(h);
-
-    // Read all rows as strings first
-    std::vector<std::vector<std::string>> rows;
-    while (std::getline(file, line)) {
-        line = trim(line);
-        if (line.empty()) continue;
-        auto fields = split_csv_line(line);
-        // Pad or truncate to match header count
-        fields.resize(ncols);
-        for (auto &f : fields) f = trim(f);
-        rows.push_back(std::move(fields));
-    }
-
-    size_t nrows = rows.size();
-    if (nrows == 0 || ncols == 0) return false;
-
-    // Detect column types by scanning all values in each column.
-    // A column is LONG if all values parse as long, DOUBLE if all parse as
-    // double (or long, which promotes), STRING otherwise.
-    std::vector<col_type> types(ncols, col_type::LONG);
-    for (size_t col = 0; col < ncols; col++) {
-        for (size_t row = 0; row < nrows; row++) {
-            auto vt = detect_value_type(rows[row][col]);
-            if (vt == col_type::STRING) {
-                types[col] = col_type::STRING;
-                break;
-            }
-            if (vt == col_type::DOUBLE && types[col] == col_type::LONG) {
-                types[col] = col_type::DOUBLE;
-            }
-        }
-    }
-
-    // Build the DataFrame
-    auto &store = *x->store;
-    store.df = ULDataFrame();
-    store.col_types.clear();
-
-    // Create index: 0..nrows-1
-    std::vector<unsigned long> idx(nrows);
-    for (size_t i = 0; i < nrows; i++) idx[i] = static_cast<unsigned long>(i);
-    store.df.load_index(std::move(idx));
-
-    // Load each column
-    for (size_t col = 0; col < ncols; col++) {
-        const auto &name = headers[col];
-        switch (types[col]) {
-            case col_type::DOUBLE: {
-                std::vector<double> vec(nrows);
-                for (size_t row = 0; row < nrows; row++) {
-                    try { vec[row] = std::stod(rows[row][col]); }
-                    catch (...) { vec[row] = 0.0; }
-                }
-                store.df.load_column(name.c_str(), std::move(vec));
-                store.col_types[name] = col_type::DOUBLE;
-                break;
-            }
-            case col_type::LONG: {
-                std::vector<long> vec(nrows);
-                for (size_t row = 0; row < nrows; row++) {
-                    try { vec[row] = std::stol(rows[row][col]); }
-                    catch (...) { vec[row] = 0; }
-                }
-                store.df.load_column(name.c_str(), std::move(vec));
-                store.col_types[name] = col_type::LONG;
-                break;
-            }
-            case col_type::STRING: {
-                std::vector<std::string> vec(nrows);
-                for (size_t row = 0; row < nrows; row++) {
-                    vec[row] = rows[row][col];
-                }
-                store.df.load_column(name.c_str(), std::move(vec));
-                store.col_types[name] = col_type::STRING;
-                break;
-            }
-        }
-    }
-
-    return true;
-}
-
-// Write the DataFrame as a plain CSV file.
-static bool write_plain_csv(t_dataframe *x, const std::string &path) {
-    std::ofstream file(path);
-    if (!file.is_open()) return false;
-
-    auto &store = *x->store;
-    auto col_names = get_column_names(x);
-    size_t ncols = col_names.size();
-    size_t nrows = store.df.get_index().size();
-
-    // Header
-    for (size_t i = 0; i < ncols; i++) {
-        if (i > 0) file << ',';
-        file << col_names[i];
-    }
-    file << '\n';
-
-    // Rows
-    for (size_t row = 0; row < nrows; row++) {
-        for (size_t col = 0; col < ncols; col++) {
-            if (col > 0) file << ',';
-            const auto &name = col_names[col];
-            switch (store.col_types[name]) {
-                case col_type::DOUBLE: {
-                    auto &c = store.df.get_column<double>(name.c_str());
-                    file << c[row];
-                    break;
-                }
-                case col_type::LONG: {
-                    auto &c = store.df.get_column<long>(name.c_str());
-                    file << c[row];
-                    break;
-                }
-                case col_type::STRING: {
-                    auto &c = store.df.get_column<std::string>(name.c_str());
-                    // Quote if the value contains commas or quotes
-                    const auto &val = c[row];
-                    if (val.find(',') != std::string::npos ||
-                        val.find('"') != std::string::npos) {
-                        file << '"';
-                        for (char ch : val) {
-                            if (ch == '"') file << '"';
-                            file << ch;
-                        }
-                        file << '"';
-                    } else {
-                        file << val;
-                    }
-                    break;
-                }
-            }
-        }
-        file << '\n';
-    }
-
-    return true;
-}
-
-// Read an xlsx file into the DataFrame using OpenXLSX.
-static bool read_xlsx(t_dataframe *x, const std::string &path) {
-    OpenXLSX::XLDocument doc;
-    doc.open(path);
-
-    auto wb = doc.workbook();
-    if (wb.worksheetCount() == 0) return false;
-
-    auto ws = wb.worksheet(1);  // 1-based index
-    uint32_t nrows_total = ws.rowCount();
-    uint16_t ncols = ws.columnCount();
-    if (nrows_total < 1 || ncols == 0) return false;
-
-    // First row = headers
-    std::vector<std::string> headers(ncols);
-    for (uint16_t col = 1; col <= ncols; col++) {
-        auto cell = ws.cell(1, col);
-        const auto &val = cell.value();
-        if (val.type() == OpenXLSX::XLValueType::String)
-            headers[col - 1] = val.get<std::string>();
-        else
-            headers[col - 1] = cell.getString();
-    }
-
-    uint32_t nrows = nrows_total - 1;  // data rows (excluding header)
-    if (nrows == 0) {
-        // Empty spreadsheet with only headers
-        auto &store = *x->store;
-        store.df = ULDataFrame();
-        store.col_types.clear();
-        std::vector<unsigned long> idx;
-        store.df.load_index(std::move(idx));
-        for (uint16_t col = 0; col < ncols; col++) {
-            std::vector<std::string> empty;
-            store.df.load_column(headers[col].c_str(), std::move(empty));
-            store.col_types[headers[col]] = col_type::STRING;
-        }
-        doc.close();
-        return true;
-    }
-
-    // Read all cell values as strings, and track types per column
-    // Start with LONG, promote to DOUBLE if mixed, STRING if non-numeric
-    std::vector<col_type> types(ncols, col_type::LONG);
-    std::vector<std::vector<std::string>> raw(ncols, std::vector<std::string>(nrows));
-
-    for (uint32_t row = 2; row <= nrows_total; row++) {
-        for (uint16_t col = 1; col <= ncols; col++) {
-            auto cell = ws.cell(row, col);
-            const auto &val = cell.value();
-            uint16_t ci = col - 1;
-            uint32_t ri = row - 2;
-
-            switch (val.type()) {
-                case OpenXLSX::XLValueType::Integer:
-                    raw[ci][ri] = std::to_string(val.get<int64_t>());
-                    // LONG stays LONG
-                    break;
-                case OpenXLSX::XLValueType::Float:
-                    raw[ci][ri] = std::to_string(val.get<double>());
-                    if (types[ci] == col_type::LONG)
-                        types[ci] = col_type::DOUBLE;
-                    break;
-                case OpenXLSX::XLValueType::Boolean:
-                    raw[ci][ri] = val.get<bool>() ? "1" : "0";
-                    break;
-                case OpenXLSX::XLValueType::String:
-                    raw[ci][ri] = val.get<std::string>();
-                    types[ci] = col_type::STRING;
-                    break;
-                case OpenXLSX::XLValueType::Empty:
-                    raw[ci][ri] = "";
-                    break;
-                default:
-                    raw[ci][ri] = "";
-                    types[ci] = col_type::STRING;
-                    break;
-            }
-        }
-    }
-
-    doc.close();
-
-    // Build DataFrame
-    auto &store = *x->store;
-    store.df = ULDataFrame();
-    store.col_types.clear();
-
-    std::vector<unsigned long> idx(nrows);
-    for (uint32_t i = 0; i < nrows; i++) idx[i] = static_cast<unsigned long>(i);
-    store.df.load_index(std::move(idx));
-
-    for (uint16_t col = 0; col < ncols; col++) {
-        const auto &name = headers[col];
-        switch (types[col]) {
-            case col_type::DOUBLE: {
-                std::vector<double> vec(nrows);
-                for (uint32_t row = 0; row < nrows; row++) {
-                    try { vec[row] = std::stod(raw[col][row]); }
-                    catch (...) { vec[row] = 0.0; }
-                }
-                store.df.load_column(name.c_str(), std::move(vec));
-                store.col_types[name] = col_type::DOUBLE;
-                break;
-            }
-            case col_type::LONG: {
-                std::vector<long> vec(nrows);
-                for (uint32_t row = 0; row < nrows; row++) {
-                    try { vec[row] = std::stol(raw[col][row]); }
-                    catch (...) { vec[row] = 0; }
-                }
-                store.df.load_column(name.c_str(), std::move(vec));
-                store.col_types[name] = col_type::LONG;
-                break;
-            }
-            case col_type::STRING: {
-                std::vector<std::string> vec(nrows);
-                for (uint32_t row = 0; row < nrows; row++) {
-                    vec[row] = raw[col][row];
-                }
-                store.df.load_column(name.c_str(), std::move(vec));
-                store.col_types[name] = col_type::STRING;
-                break;
-            }
-        }
-    }
-
-    return true;
-}
-
-// Write the DataFrame as an xlsx file using libxlsxwriter.
-static bool write_xlsx(t_dataframe *x, const std::string &path) {
-    auto &store = *x->store;
-    auto col_names = get_column_names(x);
-    size_t ncols = col_names.size();
-    size_t nrows = store.df.get_index().size();
-
-    lxw_workbook *wb = workbook_new(path.c_str());
-    if (!wb) return false;
-    lxw_worksheet *ws = workbook_add_worksheet(wb, nullptr);
-
-    // Write header row
-    for (size_t col = 0; col < ncols; col++) {
-        worksheet_write_string(ws, 0, static_cast<lxw_col_t>(col),
-                               col_names[col].c_str(), nullptr);
-    }
-
-    // Write data rows
-    for (size_t row = 0; row < nrows; row++) {
-        lxw_row_t r = static_cast<lxw_row_t>(row + 1);
-        for (size_t col = 0; col < ncols; col++) {
-            lxw_col_t c = static_cast<lxw_col_t>(col);
-            const auto &name = col_names[col];
-            switch (store.col_types[name]) {
-                case col_type::DOUBLE: {
-                    auto &data = store.df.get_column<double>(name.c_str());
-                    worksheet_write_number(ws, r, c, data[row], nullptr);
-                    break;
-                }
-                case col_type::LONG: {
-                    auto &data = store.df.get_column<long>(name.c_str());
-                    worksheet_write_number(ws, r, c,
-                                           static_cast<double>(data[row]), nullptr);
-                    break;
-                }
-                case col_type::STRING: {
-                    auto &data = store.df.get_column<std::string>(name.c_str());
-                    worksheet_write_string(ws, r, c, data[row].c_str(), nullptr);
-                    break;
-                }
-            }
-        }
-    }
-
-    lxw_error err = workbook_close(wb);
-    return err == LXW_NO_ERROR;
-}
-
 // --------------------------------------------------------------------------
 // ext_main
 // --------------------------------------------------------------------------
@@ -603,7 +306,7 @@ extern "C" void ext_main(void *r) {
         (long)sizeof(t_dataframe), 0L, A_GIMME, 0);
 
     // I/O
-    class_addmethod(c, (method)dataframe_read,    "read",    A_SYM, 0);
+    class_addmethod(c, (method)dataframe_read,    "read",    A_GIMME, 0);
     class_addmethod(c, (method)dataframe_write,   "write",   A_SYM, 0);
     class_addmethod(c, (method)dataframe_clear,   "clear",   0);
 
@@ -625,6 +328,8 @@ extern "C" void ext_main(void *r) {
     class_addmethod(c, (method)dataframe_min,    "min",    A_SYM, 0);
     class_addmethod(c, (method)dataframe_max,    "max",    A_SYM, 0);
     class_addmethod(c, (method)dataframe_count,  "count",  A_SYM, 0);
+    class_addmethod(c, (method)dataframe_corr,     "corr",     A_GIMME, 0);
+    class_addmethod(c, (method)dataframe_quantile,  "quantile",  A_GIMME, 0);
 
     // Filtering
     class_addmethod(c, (method)dataframe_sel,    "sel",    A_GIMME, 0);
@@ -637,6 +342,19 @@ extern "C" void ext_main(void *r) {
 
     // Join
     class_addmethod(c, (method)dataframe_join,   "join",   A_GIMME, 0);
+
+    // Data manipulation
+    class_addmethod(c, (method)dataframe_fill_missing, "fill_missing", A_GIMME, 0);
+    class_addmethod(c, (method)dataframe_curvefit,     "curvefit",     A_GIMME, 0);
+    class_addmethod(c, (method)dataframe_apply,        "apply",        A_GIMME, 0);
+
+    // Reshape
+    class_addmethod(c, (method)dataframe_melt,         "melt",         A_GIMME, 0);
+    class_addmethod(c, (method)dataframe_pivot,        "pivot",        A_GIMME, 0);
+    class_addmethod(c, (method)dataframe_transpose,    "transpose",    A_GIMME, 0);
+
+    // Dict interop
+    class_addmethod(c, (method)dataframe_todict,       "todict",       A_GIMME, 0);
 
     // Assist
     class_addmethod(c, (method)dataframe_assist, "assist", A_CANT, 0);
@@ -678,6 +396,8 @@ static void *dataframe_new(t_symbol *s, long argc, t_atom *argv) {
         x->store->refcount++;
     }
 
+    x->thread = nullptr;
+
     post_info(x, "dataframe: instance '%s' (refcount: %zu)",
               x->name->s_name, x->store->refcount);
 
@@ -685,6 +405,11 @@ static void *dataframe_new(t_symbol *s, long argc, t_atom *argv) {
 }
 
 static void dataframe_free(t_dataframe *x) {
+    if (x->thread) {
+        unsigned int rv;
+        systhread_join(x->thread, &rv);
+        x->thread = nullptr;
+    }
     std::lock_guard<std::mutex> lock(g_registry_mutex);
     if (x->store) {
         x->store->refcount--;
@@ -699,7 +424,8 @@ static void dataframe_assist(t_dataframe *x, void *b, long m, long a, char *s) {
     if (m == ASSIST_INLET) {
         snprintf(s, 256, "messages: read, write, clear, bang, columns, shape, "
                  "head, tail, getcol, mean, median, std, var, sum, min, max, "
-                 "count, describe, sel, sort, groupby, join");
+                 "count, describe, corr, quantile, sel, sort, groupby, join, "
+                 "fill_missing, curvefit, apply, melt, pivot, transpose, todict");
     } else {
         switch (a) {
             case 0: snprintf(s, 256, "data output (lists, floats, symbols)"); break;
@@ -735,68 +461,441 @@ static std::string resolve_path(t_dataframe *x, const char *name) {
     return std::string(fullpath);
 }
 
-static void dataframe_read(t_dataframe *x, t_symbol *s) {
-    try {
-        std::string path = resolve_path(x, s->s_name);
-        if (path.empty()) return;
+// Worker-thread helpers for read_plain_csv and read_xlsx that operate on
+// a standalone ULDataFrame + col_types map (no t_dataframe access).
+static bool read_plain_csv_into(const std::string &path, ULDataFrame &df,
+                                std::unordered_map<std::string, col_type> &types) {
+    std::ifstream file(path);
+    if (!file.is_open()) return false;
 
-        std::string ext = get_extension(path);
+    std::string line;
+    if (!std::getline(file, line)) return false;
+    auto headers = split_csv_line(line);
+    size_t ncols = headers.size();
+    for (auto &h : headers) h = trim(h);
 
-        bool ok = false;
-        if (ext == "xlsx") {
-            ok = read_xlsx(x, path);
-        } else if (ext == "json") {
-            x->store->df = ULDataFrame();
-            x->store->col_types.clear();
-            x->store->df.read(path.c_str(), io_format::json);
-            detect_column_types(x);
-            ok = true;
-        } else {
-            ok = read_plain_csv(x, path);
+    std::vector<std::vector<std::string>> rows;
+    while (std::getline(file, line)) {
+        line = trim(line);
+        if (line.empty()) continue;
+        auto fields = split_csv_line(line);
+        fields.resize(ncols);
+        for (auto &f : fields) f = trim(f);
+        rows.push_back(std::move(fields));
+    }
+
+    size_t nrows = rows.size();
+    if (nrows == 0 || ncols == 0) return false;
+
+    std::vector<col_type> ctypes(ncols, col_type::LONG);
+    for (size_t col = 0; col < ncols; col++) {
+        for (size_t row = 0; row < nrows; row++) {
+            auto vt = detect_value_type(rows[row][col]);
+            if (vt == col_type::STRING) { ctypes[col] = col_type::STRING; break; }
+            if (vt == col_type::DOUBLE && ctypes[col] == col_type::LONG)
+                ctypes[col] = col_type::DOUBLE;
         }
+    }
 
-        if (!ok) {
-            post_error(x, "dataframe: failed to read '%s'", s->s_name);
-            return;
+    df = ULDataFrame();
+    types.clear();
+    std::vector<unsigned long> idx(nrows);
+    for (size_t i = 0; i < nrows; i++) idx[i] = static_cast<unsigned long>(i);
+    df.load_index(std::move(idx));
+
+    for (size_t col = 0; col < ncols; col++) {
+        const auto &name = headers[col];
+        switch (ctypes[col]) {
+            case col_type::DOUBLE: {
+                std::vector<double> vec(nrows);
+                for (size_t row = 0; row < nrows; row++) {
+                    try { vec[row] = std::stod(rows[row][col]); }
+                    catch (...) { vec[row] = 0.0; }
+                }
+                df.load_column(name.c_str(), std::move(vec));
+                types[name] = col_type::DOUBLE;
+                break;
+            }
+            case col_type::LONG: {
+                std::vector<long> vec(nrows);
+                for (size_t row = 0; row < nrows; row++) {
+                    try { vec[row] = std::stol(rows[row][col]); }
+                    catch (...) { vec[row] = 0; }
+                }
+                df.load_column(name.c_str(), std::move(vec));
+                types[name] = col_type::LONG;
+                break;
+            }
+            case col_type::STRING: {
+                std::vector<std::string> vec(nrows);
+                for (size_t row = 0; row < nrows; row++) vec[row] = rows[row][col];
+                df.load_column(name.c_str(), std::move(vec));
+                types[name] = col_type::STRING;
+                break;
+            }
         }
+    }
+    return true;
+}
 
+static bool read_xlsx_into(const std::string &path, const std::string &sheet_name,
+                           ULDataFrame &df,
+                           std::unordered_map<std::string, col_type> &types) {
+    OpenXLSX::XLDocument doc;
+    doc.open(path);
+    auto wb = doc.workbook();
+    if (wb.worksheetCount() == 0) return false;
+
+    auto ws = sheet_name.empty() ? wb.worksheet(1) : wb.worksheet(sheet_name);
+    uint32_t nrows_total = ws.rowCount();
+    uint16_t ncols = ws.columnCount();
+    if (nrows_total < 1 || ncols == 0) return false;
+
+    std::vector<std::string> headers(ncols);
+    for (uint16_t col = 1; col <= ncols; col++) {
+        auto cell = ws.cell(1, col);
+        const auto &val = cell.value();
+        if (val.type() == OpenXLSX::XLValueType::String)
+            headers[col - 1] = val.get<std::string>();
+        else
+            headers[col - 1] = cell.getString();
+    }
+
+    uint32_t nrows = nrows_total - 1;
+    df = ULDataFrame();
+    types.clear();
+
+    if (nrows == 0) {
+        std::vector<unsigned long> idx;
+        df.load_index(std::move(idx));
+        for (uint16_t col = 0; col < ncols; col++) {
+            std::vector<std::string> empty;
+            df.load_column(headers[col].c_str(), std::move(empty));
+            types[headers[col]] = col_type::STRING;
+        }
+        doc.close();
+        return true;
+    }
+
+    std::vector<col_type> ctypes(ncols, col_type::LONG);
+    std::vector<std::vector<std::string>> raw(ncols, std::vector<std::string>(nrows));
+
+    for (uint32_t row = 2; row <= nrows_total; row++) {
+        for (uint16_t col = 1; col <= ncols; col++) {
+            auto cell = ws.cell(row, col);
+            const auto &val = cell.value();
+            uint16_t ci = col - 1;
+            uint32_t ri = row - 2;
+            switch (val.type()) {
+                case OpenXLSX::XLValueType::Integer:
+                    raw[ci][ri] = std::to_string(val.get<int64_t>());
+                    break;
+                case OpenXLSX::XLValueType::Float:
+                    raw[ci][ri] = std::to_string(val.get<double>());
+                    if (ctypes[ci] == col_type::LONG) ctypes[ci] = col_type::DOUBLE;
+                    break;
+                case OpenXLSX::XLValueType::Boolean:
+                    raw[ci][ri] = val.get<bool>() ? "1" : "0";
+                    break;
+                case OpenXLSX::XLValueType::String:
+                    raw[ci][ri] = val.get<std::string>();
+                    ctypes[ci] = col_type::STRING;
+                    break;
+                case OpenXLSX::XLValueType::Empty:
+                    raw[ci][ri] = "";
+                    break;
+                default:
+                    raw[ci][ri] = "";
+                    ctypes[ci] = col_type::STRING;
+                    break;
+            }
+        }
+    }
+    doc.close();
+
+    std::vector<unsigned long> idx(nrows);
+    for (uint32_t i = 0; i < nrows; i++) idx[i] = static_cast<unsigned long>(i);
+    df.load_index(std::move(idx));
+
+    for (uint16_t col = 0; col < ncols; col++) {
+        const auto &name = headers[col];
+        switch (ctypes[col]) {
+            case col_type::DOUBLE: {
+                std::vector<double> vec(nrows);
+                for (uint32_t row = 0; row < nrows; row++) {
+                    try { vec[row] = std::stod(raw[col][row]); }
+                    catch (...) { vec[row] = 0.0; }
+                }
+                df.load_column(name.c_str(), std::move(vec));
+                types[name] = col_type::DOUBLE;
+                break;
+            }
+            case col_type::LONG: {
+                std::vector<long> vec(nrows);
+                for (uint32_t row = 0; row < nrows; row++) {
+                    try { vec[row] = std::stol(raw[col][row]); }
+                    catch (...) { vec[row] = 0; }
+                }
+                df.load_column(name.c_str(), std::move(vec));
+                types[name] = col_type::LONG;
+                break;
+            }
+            case col_type::STRING: {
+                std::vector<std::string> vec(nrows);
+                for (uint32_t row = 0; row < nrows; row++) vec[row] = raw[col][row];
+                df.load_column(name.c_str(), std::move(vec));
+                types[name] = col_type::STRING;
+                break;
+            }
+        }
+    }
+    return true;
+}
+
+// Deferred completion callback for read (runs on main thread)
+static void dataframe_read_done(t_dataframe *x, t_symbol *, short argc, t_atom *argv) {
+    AsyncIOArgs *args = reinterpret_cast<AsyncIOArgs *>(atom_getlong(argv));
+    if (args->ok) {
+        x->store->df = std::move(args->df);
+        x->store->col_types = std::move(args->col_types);
         auto nrows = x->store->df.get_index().size();
         auto ncols = x->store->col_types.size();
         post_info(x, "dataframe: read %zu rows x %zu columns from '%s'",
-                  nrows, ncols, s->s_name);
-
+                  nrows, ncols, args->filename.c_str());
         outlet_bang(x->outlet_info);
-    } catch (const std::exception &e) {
-        post_error(x, "dataframe: read failed: %s", e.what());
+    } else {
+        if (!args->error_msg.empty())
+            post_error(x, "dataframe: read failed: %s", args->error_msg.c_str());
+        else
+            post_error(x, "dataframe: failed to read '%s'", args->filename.c_str());
     }
+    x->thread = nullptr;
+    delete args;
+}
+
+// Read worker thread entry point
+static void *dataframe_read_worker(void *arg) {
+    AsyncIOArgs *a = static_cast<AsyncIOArgs *>(arg);
+    try {
+        std::string ext = get_extension(a->path);
+        if (ext == "xlsx") {
+            a->ok = read_xlsx_into(a->path, a->sheet, a->df, a->col_types);
+        } else if (ext == "json") {
+            a->df = ULDataFrame();
+            a->col_types.clear();
+            a->df.read(a->path.c_str(), io_format::json);
+            auto col_info = a->df.get_columns_info<double, long, std::string>();
+            for (auto &info : col_info) {
+                std::string name(std::get<0>(info).c_str());
+                if (name == DF_INDEX_COL_NAME) continue;
+                auto ti = std::get<2>(info);
+                if (ti == std::type_index(typeid(double)))
+                    a->col_types[name] = col_type::DOUBLE;
+                else if (ti == std::type_index(typeid(long)))
+                    a->col_types[name] = col_type::LONG;
+                else if (ti == std::type_index(typeid(std::string)))
+                    a->col_types[name] = col_type::STRING;
+            }
+            a->ok = true;
+        } else {
+            a->ok = read_plain_csv_into(a->path, a->df, a->col_types);
+        }
+    } catch (const std::exception &e) {
+        a->ok = false;
+        a->error_msg = e.what();
+    }
+    t_atom av;
+    atom_setlong(&av, reinterpret_cast<t_atom_long>(a));
+    defer_low(a->x, (method)dataframe_read_done, nullptr, 1, &av);
+    systhread_exit(0);
+    return nullptr;
+}
+
+// Deferred completion callback for write (runs on main thread)
+static void dataframe_write_done(t_dataframe *x, t_symbol *, short argc, t_atom *argv) {
+    AsyncIOArgs *args = reinterpret_cast<AsyncIOArgs *>(atom_getlong(argv));
+    if (args->ok) {
+        post_info(x, "dataframe: wrote to '%s'", args->filename.c_str());
+        outlet_bang(x->outlet_info);
+    } else {
+        if (!args->error_msg.empty())
+            post_error(x, "dataframe: write failed: %s", args->error_msg.c_str());
+        else
+            post_error(x, "dataframe: failed to write '%s'", args->filename.c_str());
+    }
+    x->thread = nullptr;
+    delete args;
+}
+
+// Write worker thread entry point
+static void *dataframe_write_worker(void *arg) {
+    AsyncIOArgs *a = static_cast<AsyncIOArgs *>(arg);
+    try {
+        std::string ext = get_extension(a->path);
+        if (ext == "xlsx") {
+            // We need the store data, which was copied into a->df / a->col_types
+            // but write_xlsx works on t_dataframe. Instead, just do the write
+            // directly here using the copied data.
+            auto &df = a->df;
+            auto &col_types = a->col_types;
+
+            // Get sorted column names
+            std::vector<std::string> col_names;
+            for (auto &pair : col_types) col_names.push_back(pair.first);
+            std::sort(col_names.begin(), col_names.end());
+
+            size_t ncols = col_names.size();
+            size_t nrows = df.get_index().size();
+
+            lxw_workbook *wb = workbook_new(a->path.c_str());
+            if (!wb) { a->ok = false; }
+            else {
+                lxw_worksheet *ws = workbook_add_worksheet(wb, nullptr);
+                for (size_t col = 0; col < ncols; col++)
+                    worksheet_write_string(ws, 0, static_cast<lxw_col_t>(col),
+                                           col_names[col].c_str(), nullptr);
+                for (size_t row = 0; row < nrows; row++) {
+                    lxw_row_t r = static_cast<lxw_row_t>(row + 1);
+                    for (size_t col = 0; col < ncols; col++) {
+                        lxw_col_t c = static_cast<lxw_col_t>(col);
+                        const auto &name = col_names[col];
+                        switch (col_types[name]) {
+                            case col_type::DOUBLE:
+                                worksheet_write_number(ws, r, c,
+                                    df.get_column<double>(name.c_str())[row], nullptr);
+                                break;
+                            case col_type::LONG:
+                                worksheet_write_number(ws, r, c,
+                                    static_cast<double>(df.get_column<long>(name.c_str())[row]),
+                                    nullptr);
+                                break;
+                            case col_type::STRING:
+                                worksheet_write_string(ws, r, c,
+                                    df.get_column<std::string>(name.c_str())[row].c_str(),
+                                    nullptr);
+                                break;
+                        }
+                    }
+                }
+                a->ok = (workbook_close(wb) == LXW_NO_ERROR);
+            }
+        } else if (ext == "json") {
+            a->df.write<double, long, std::string>(a->path.c_str(), io_format::json);
+            a->ok = true;
+        } else {
+            // CSV
+            auto &df = a->df;
+            auto &col_types = a->col_types;
+            std::vector<std::string> col_names;
+            for (auto &pair : col_types) col_names.push_back(pair.first);
+            std::sort(col_names.begin(), col_names.end());
+
+            std::ofstream file(a->path);
+            if (!file.is_open()) { a->ok = false; }
+            else {
+                size_t ncols = col_names.size();
+                size_t nrows = df.get_index().size();
+                for (size_t i = 0; i < ncols; i++) {
+                    if (i > 0) file << ',';
+                    file << col_names[i];
+                }
+                file << '\n';
+                for (size_t row = 0; row < nrows; row++) {
+                    for (size_t col = 0; col < ncols; col++) {
+                        if (col > 0) file << ',';
+                        const auto &name = col_names[col];
+                        switch (col_types[name]) {
+                            case col_type::DOUBLE:
+                                file << df.get_column<double>(name.c_str())[row];
+                                break;
+                            case col_type::LONG:
+                                file << df.get_column<long>(name.c_str())[row];
+                                break;
+                            case col_type::STRING: {
+                                const auto &val = df.get_column<std::string>(name.c_str())[row];
+                                if (val.find(',') != std::string::npos ||
+                                    val.find('"') != std::string::npos) {
+                                    file << '"';
+                                    for (char ch : val) {
+                                        if (ch == '"') file << '"';
+                                        file << ch;
+                                    }
+                                    file << '"';
+                                } else {
+                                    file << val;
+                                }
+                                break;
+                            }
+                        }
+                    }
+                    file << '\n';
+                }
+                a->ok = true;
+            }
+        }
+    } catch (const std::exception &e) {
+        a->ok = false;
+        a->error_msg = e.what();
+    }
+
+    t_atom av;
+    atom_setlong(&av, reinterpret_cast<t_atom_long>(a));
+    defer_low(a->x, (method)dataframe_write_done, nullptr, 1, &av);
+    systhread_exit(0);
+    return nullptr;
+}
+
+static void dataframe_read(t_dataframe *x, t_symbol *s, long argc, t_atom *argv) {
+    if (argc < 1 || atom_gettype(argv) != A_SYM) {
+        post_error(x, "dataframe: read requires <file> [sheet]");
+        return;
+    }
+
+    if (x->thread) {
+        post_error(x, "dataframe: I/O already in progress");
+        return;
+    }
+
+    t_symbol *file_sym = atom_getsym(argv);
+    std::string sheet_name;
+    if (argc >= 2 && atom_gettype(argv + 1) == A_SYM)
+        sheet_name = atom_getsym(argv + 1)->s_name;
+
+    std::string path = resolve_path(x, file_sym->s_name);
+    if (path.empty()) return;
+
+    AsyncIOArgs *a = new AsyncIOArgs();
+    a->x = x;
+    a->filename = file_sym->s_name;
+    a->path = path;
+    a->sheet = sheet_name;
+    a->is_write = false;
+    a->ok = false;
+
+    systhread_create((method)dataframe_read_worker, a, 0, 0, 0, &x->thread);
 }
 
 static void dataframe_write(t_dataframe *x, t_symbol *s) {
-    try {
-        std::string path(s->s_name);
-        std::string ext = get_extension(path);
-
-        bool ok = false;
-        if (ext == "xlsx") {
-            ok = write_xlsx(x, path);
-        } else if (ext == "json") {
-            x->store->df.write<double, long, std::string>(
-                path.c_str(), io_format::json);
-            ok = true;
-        } else {
-            ok = write_plain_csv(x, path);
-        }
-
-        if (!ok) {
-            post_error(x, "dataframe: failed to write '%s'", s->s_name);
-            return;
-        }
-
-        post_info(x, "dataframe: wrote to '%s'", s->s_name);
-        outlet_bang(x->outlet_info);
-    } catch (const std::exception &e) {
-        post_error(x, "dataframe: write failed: %s", e.what());
+    if (x->thread) {
+        post_error(x, "dataframe: I/O already in progress");
+        return;
     }
+
+    std::string path(s->s_name);
+
+    // Snapshot the data for the worker thread
+    AsyncIOArgs *a = new AsyncIOArgs();
+    a->x = x;
+    a->filename = s->s_name;
+    a->path = path;
+    a->is_write = true;
+    a->ok = false;
+
+    // Copy current DataFrame data for thread-safe write
+    a->df = x->store->df;
+    a->col_types = x->store->col_types;
+
+    systhread_create((method)dataframe_write_worker, a, 0, 0, 0, &x->thread);
 }
 
 static void dataframe_clear(t_dataframe *x) {
@@ -927,24 +1026,70 @@ static void dataframe_getcol(t_dataframe *x, t_symbol *s) {
 // Statistics
 // --------------------------------------------------------------------------
 
-// Helper: ensure column exists and is numeric (double)
+// Helper: ensure column exists and is numeric (double or long)
+static bool require_numeric_col(t_dataframe *x, const char *col_name) {
+    if (!has_col(x, col_name)) {
+        post_error(x, "dataframe: column '%s' not found", col_name);
+        return false;
+    }
+    auto ct = get_col_type(x, col_name);
+    if (ct != col_type::DOUBLE && ct != col_type::LONG) {
+        post_error(x, "dataframe: column '%s' is not numeric", col_name);
+        return false;
+    }
+    return true;
+}
+
+// Helper: ensure column exists and is strictly double (for in-place mutation)
 static bool require_double_col(t_dataframe *x, const char *col_name) {
     if (!has_col(x, col_name)) {
         post_error(x, "dataframe: column '%s' not found", col_name);
         return false;
     }
     if (get_col_type(x, col_name) != col_type::DOUBLE) {
-        post_error(x, "dataframe: column '%s' is not numeric (double)", col_name);
+        post_error(x, "dataframe: column '%s' is not double", col_name);
         return false;
     }
     return true;
 }
 
+// Helper: build a temp DataFrame with specified columns promoted to double.
+// Used by stat functions to handle long columns transparently.
+static ULDataFrame make_numeric_tmp(t_dataframe *x,
+                                    std::initializer_list<const char *> col_names) {
+    ULDataFrame tmp;
+    std::vector<unsigned long> idx(x->store->df.get_index());
+    tmp.load_index(std::move(idx));
+
+    for (auto name : col_names) {
+        if (get_col_type(x, name) == col_type::DOUBLE) {
+            auto &c = x->store->df.get_column<double>(name);
+            tmp.load_column(name, std::vector<double>(c.begin(), c.end()));
+        } else {
+            auto &c = x->store->df.get_column<long>(name);
+            tmp.load_column(name, std::vector<double>(c.begin(), c.end()));
+        }
+    }
+    return tmp;
+}
+
+// Helper: visit a numeric column with a double-typed visitor.
+// Long columns are promoted to double via a temporary DataFrame.
+template<typename Visitor>
+static void visit_numeric(t_dataframe *x, const char *col_name, Visitor &v) {
+    if (get_col_type(x, col_name) == col_type::DOUBLE) {
+        x->store->df.visit<double>(col_name, v);
+    } else {
+        auto tmp = make_numeric_tmp(x, {col_name});
+        tmp.visit<double>(col_name, v);
+    }
+}
+
 static void dataframe_mean(t_dataframe *x, t_symbol *s) {
-    if (!require_double_col(x, s->s_name)) return;
+    if (!require_numeric_col(x, s->s_name)) return;
     try {
         MeanVisitor<double, unsigned long> v;
-        x->store->df.visit<double>(s->s_name, v);
+        visit_numeric(x, s->s_name, v);
         outlet_float(x->outlet_data, v.get_result());
     } catch (const std::exception &e) {
         post_error(x, "dataframe: mean failed: %s", e.what());
@@ -952,10 +1097,10 @@ static void dataframe_mean(t_dataframe *x, t_symbol *s) {
 }
 
 static void dataframe_median(t_dataframe *x, t_symbol *s) {
-    if (!require_double_col(x, s->s_name)) return;
+    if (!require_numeric_col(x, s->s_name)) return;
     try {
         MedianVisitor<double, unsigned long> v;
-        x->store->df.visit<double>(s->s_name, v);
+        visit_numeric(x, s->s_name, v);
         outlet_float(x->outlet_data, v.get_result());
     } catch (const std::exception &e) {
         post_error(x, "dataframe: median failed: %s", e.what());
@@ -963,10 +1108,10 @@ static void dataframe_median(t_dataframe *x, t_symbol *s) {
 }
 
 static void dataframe_std(t_dataframe *x, t_symbol *s) {
-    if (!require_double_col(x, s->s_name)) return;
+    if (!require_numeric_col(x, s->s_name)) return;
     try {
         StdVisitor<double, unsigned long> v;
-        x->store->df.visit<double>(s->s_name, v);
+        visit_numeric(x, s->s_name, v);
         outlet_float(x->outlet_data, v.get_result());
     } catch (const std::exception &e) {
         post_error(x, "dataframe: std failed: %s", e.what());
@@ -974,10 +1119,10 @@ static void dataframe_std(t_dataframe *x, t_symbol *s) {
 }
 
 static void dataframe_var(t_dataframe *x, t_symbol *s) {
-    if (!require_double_col(x, s->s_name)) return;
+    if (!require_numeric_col(x, s->s_name)) return;
     try {
         VarVisitor<double, unsigned long> v;
-        x->store->df.visit<double>(s->s_name, v);
+        visit_numeric(x, s->s_name, v);
         outlet_float(x->outlet_data, v.get_result());
     } catch (const std::exception &e) {
         post_error(x, "dataframe: var failed: %s", e.what());
@@ -985,10 +1130,10 @@ static void dataframe_var(t_dataframe *x, t_symbol *s) {
 }
 
 static void dataframe_sum(t_dataframe *x, t_symbol *s) {
-    if (!require_double_col(x, s->s_name)) return;
+    if (!require_numeric_col(x, s->s_name)) return;
     try {
         SumVisitor<double, unsigned long> v;
-        x->store->df.visit<double>(s->s_name, v);
+        visit_numeric(x, s->s_name, v);
         outlet_float(x->outlet_data, v.get_result());
     } catch (const std::exception &e) {
         post_error(x, "dataframe: sum failed: %s", e.what());
@@ -996,10 +1141,10 @@ static void dataframe_sum(t_dataframe *x, t_symbol *s) {
 }
 
 static void dataframe_min(t_dataframe *x, t_symbol *s) {
-    if (!require_double_col(x, s->s_name)) return;
+    if (!require_numeric_col(x, s->s_name)) return;
     try {
         MinVisitor<double, unsigned long> v;
-        x->store->df.visit<double>(s->s_name, v);
+        visit_numeric(x, s->s_name, v);
         outlet_float(x->outlet_data, v.get_result());
     } catch (const std::exception &e) {
         post_error(x, "dataframe: min failed: %s", e.what());
@@ -1007,10 +1152,10 @@ static void dataframe_min(t_dataframe *x, t_symbol *s) {
 }
 
 static void dataframe_max(t_dataframe *x, t_symbol *s) {
-    if (!require_double_col(x, s->s_name)) return;
+    if (!require_numeric_col(x, s->s_name)) return;
     try {
         MaxVisitor<double, unsigned long> v;
-        x->store->df.visit<double>(s->s_name, v);
+        visit_numeric(x, s->s_name, v);
         outlet_float(x->outlet_data, v.get_result());
     } catch (const std::exception &e) {
         post_error(x, "dataframe: max failed: %s", e.what());
@@ -1052,7 +1197,7 @@ static void dataframe_count(t_dataframe *x, t_symbol *s) {
 }
 
 static void dataframe_describe(t_dataframe *x, t_symbol *s) {
-    if (!require_double_col(x, s->s_name)) return;
+    if (!require_numeric_col(x, s->s_name)) return;
 
     try {
         const char *col_name = s->s_name;
@@ -1066,14 +1211,14 @@ static void dataframe_describe(t_dataframe *x, t_symbol *s) {
         CountVisitor<double, unsigned long> count_v;
         SumVisitor<double, unsigned long> sum_v;
 
-        x->store->df.visit<double>(col_name, mean_v);
-        x->store->df.visit<double>(col_name, median_v);
-        x->store->df.visit<double>(col_name, std_v);
-        x->store->df.visit<double>(col_name, var_v);
-        x->store->df.visit<double>(col_name, min_v);
-        x->store->df.visit<double>(col_name, max_v);
-        x->store->df.visit<double>(col_name, count_v);
-        x->store->df.visit<double>(col_name, sum_v);
+        visit_numeric(x, col_name, mean_v);
+        visit_numeric(x, col_name, median_v);
+        visit_numeric(x, col_name, std_v);
+        visit_numeric(x, col_name, var_v);
+        visit_numeric(x, col_name, min_v);
+        visit_numeric(x, col_name, max_v);
+        visit_numeric(x, col_name, count_v);
+        visit_numeric(x, col_name, sum_v);
 
         // Output as key-value pairs via info outlet
         t_atom av[2];
@@ -1113,6 +1258,59 @@ static void dataframe_describe(t_dataframe *x, t_symbol *s) {
         outlet_bang(x->outlet_info);
     } catch (const std::exception &e) {
         post_error(x, "dataframe: describe failed: %s", e.what());
+    }
+}
+
+static void dataframe_corr(t_dataframe *x, t_symbol *s, long argc, t_atom *argv) {
+    if (argc < 2) {
+        post_error(x, "dataframe: corr requires <col1> <col2>");
+        return;
+    }
+
+    const char *col1 = atom_getsym(argv)->s_name;
+    const char *col2 = atom_getsym(argv + 1)->s_name;
+
+    if (!require_numeric_col(x, col1)) return;
+    if (!require_numeric_col(x, col2)) return;
+
+    try {
+        CorrVisitor<double, unsigned long> v;
+        auto ct1 = get_col_type(x, col1);
+        auto ct2 = get_col_type(x, col2);
+        if (ct1 == col_type::DOUBLE && ct2 == col_type::DOUBLE) {
+            x->store->df.visit<double, double>(col1, col2, v);
+        } else {
+            auto tmp = make_numeric_tmp(x, {col1, col2});
+            tmp.visit<double, double>(col1, col2, v);
+        }
+        outlet_float(x->outlet_data, v.get_result());
+    } catch (const std::exception &e) {
+        post_error(x, "dataframe: corr failed: %s", e.what());
+    }
+}
+
+static void dataframe_quantile(t_dataframe *x, t_symbol *s, long argc, t_atom *argv) {
+    if (argc < 2) {
+        post_error(x, "dataframe: quantile requires <col> <value>");
+        return;
+    }
+
+    const char *col_name = atom_getsym(argv)->s_name;
+    double qt = atom_getfloat(argv + 1);
+
+    if (!require_numeric_col(x, col_name)) return;
+
+    if (qt < 0.0 || qt > 1.0) {
+        post_error(x, "dataframe: quantile value must be in [0.0, 1.0]");
+        return;
+    }
+
+    try {
+        QuantileVisitor<double, unsigned long> v(qt);
+        visit_numeric(x, col_name, v);
+        outlet_float(x->outlet_data, v.get_result());
+    } catch (const std::exception &e) {
+        post_error(x, "dataframe: quantile failed: %s", e.what());
     }
 }
 
@@ -1516,5 +1714,419 @@ static void dataframe_join(t_dataframe *x, t_symbol *s, long argc, t_atom *argv)
         outlet_bang(x->outlet_info);
     } catch (const std::exception &e) {
         post_error(x, "dataframe: join failed: %s", e.what());
+    }
+}
+
+// --------------------------------------------------------------------------
+// Fill Missing
+// --------------------------------------------------------------------------
+
+// fill_missing <col> <policy> [value]
+// Policies: forward, backward, value <v>, linear, midpoint
+static void dataframe_fill_missing(t_dataframe *x, t_symbol *s, long argc, t_atom *argv) {
+    if (argc < 2) {
+        post_error(x, "dataframe: fill_missing requires <col> <policy> [value]");
+        return;
+    }
+
+    const char *col_name = atom_getsym(argv)->s_name;
+    const char *policy_str = atom_getsym(argv + 1)->s_name;
+
+    if (!require_double_col(x, col_name)) return;
+
+    try {
+        std::string policy(policy_str);
+        fill_policy fp;
+        ULDataFrame::StlVecType<double> values;
+
+        if (policy == "forward") {
+            fp = fill_policy::fill_forward;
+        } else if (policy == "backward") {
+            fp = fill_policy::fill_backward;
+        } else if (policy == "value") {
+            if (argc < 3) {
+                post_error(x, "dataframe: fill_missing value requires a fill value");
+                return;
+            }
+            fp = fill_policy::value;
+            values.push_back(atom_getfloat(argv + 2));
+        } else if (policy == "linear") {
+            fp = fill_policy::linear_interpolate;
+        } else if (policy == "midpoint") {
+            fp = fill_policy::mid_point;
+        } else {
+            post_error(x, "dataframe: unknown fill policy '%s' "
+                       "(use forward, backward, value, linear, midpoint)", policy_str);
+            return;
+        }
+
+        ULDataFrame::StlVecType<const char *> col_names = { col_name };
+        x->store->df.fill_missing<double>(col_names, fp, values);
+
+        post_info(x, "dataframe: fill_missing '%s' with policy '%s'",
+                  col_name, policy_str);
+        outlet_bang(x->outlet_info);
+    } catch (const std::exception &e) {
+        post_error(x, "dataframe: fill_missing failed: %s", e.what());
+    }
+}
+
+// --------------------------------------------------------------------------
+// Curve Fitting
+// --------------------------------------------------------------------------
+
+// curvefit <type> <x_col> <y_col> [degree]
+// Types: linear, poly, exp, log, spline
+static void dataframe_curvefit(t_dataframe *x, t_symbol *s, long argc, t_atom *argv) {
+    if (argc < 3) {
+        post_error(x, "dataframe: curvefit requires <type> <x_col> <y_col> [degree]");
+        return;
+    }
+
+    const char *fit_type = atom_getsym(argv)->s_name;
+    const char *x_col = atom_getsym(argv + 1)->s_name;
+    const char *y_col = atom_getsym(argv + 2)->s_name;
+
+    if (!require_numeric_col(x, x_col)) return;
+    if (!require_numeric_col(x, y_col)) return;
+
+    try {
+        std::string type(fit_type);
+        std::vector<t_atom> out_atoms;
+
+        // Build a temp DataFrame if either column is long
+        auto ct_x = get_col_type(x, x_col);
+        auto ct_y = get_col_type(x, y_col);
+        bool need_tmp = (ct_x != col_type::DOUBLE || ct_y != col_type::DOUBLE);
+        ULDataFrame tmp;
+        if (need_tmp) tmp = make_numeric_tmp(x, {x_col, y_col});
+        auto &df_ref = need_tmp ? tmp : x->store->df;
+
+        if (type == "linear") {
+            LinearFitVisitor<double, unsigned long> v;
+            df_ref.single_act_visit<double, double>(x_col, y_col, v);
+            out_atoms.resize(2);
+            atom_setfloat(&out_atoms[0], v.get_slope());
+            atom_setfloat(&out_atoms[1], v.get_intercept());
+        } else if (type == "poly") {
+            long degree = 2;
+            if (argc >= 4) degree = atom_getlong(argv + 3);
+            if (degree < 1) degree = 1;
+            PolyFitVisitor<double, unsigned long> v(static_cast<size_t>(degree + 1));
+            df_ref.single_act_visit<double, double>(x_col, y_col, v);
+            auto &coeffs = v.get_result();
+            out_atoms.resize(coeffs.size());
+            for (size_t i = 0; i < coeffs.size(); i++)
+                atom_setfloat(&out_atoms[i], coeffs[i]);
+        } else if (type == "exp") {
+            ExponentialFitVisitor<double, unsigned long> v;
+            df_ref.single_act_visit<double, double>(x_col, y_col, v);
+            out_atoms.resize(2);
+            atom_setfloat(&out_atoms[0], v.get_slope());
+            atom_setfloat(&out_atoms[1], v.get_intercept());
+        } else if (type == "log") {
+            LogFitVisitor<double, unsigned long> v;
+            df_ref.single_act_visit<double, double>(x_col, y_col, v);
+            auto &coeffs = v.get_result();
+            out_atoms.resize(coeffs.size());
+            for (size_t i = 0; i < coeffs.size(); i++)
+                atom_setfloat(&out_atoms[i], coeffs[i]);
+        } else if (type == "spline") {
+            CubicSplineFitVisitor<double, unsigned long> v;
+            df_ref.single_act_visit<double, double>(x_col, y_col, v);
+            auto &b = v.get_result();
+            out_atoms.resize(b.size());
+            for (size_t i = 0; i < b.size(); i++)
+                atom_setfloat(&out_atoms[i], b[i]);
+        } else {
+            post_error(x, "dataframe: unknown fit type '%s' "
+                       "(use linear, poly, exp, log, spline)", fit_type);
+            return;
+        }
+
+        outlet_list(x->outlet_data, nullptr,
+                    static_cast<long>(out_atoms.size()), out_atoms.data());
+        outlet_bang(x->outlet_info);
+    } catch (const std::exception &e) {
+        post_error(x, "dataframe: curvefit failed: %s", e.what());
+    }
+}
+
+// --------------------------------------------------------------------------
+// Apply
+// --------------------------------------------------------------------------
+
+// apply <col> <op> <value>
+// Operators: +, -, *, /
+static void dataframe_apply(t_dataframe *x, t_symbol *s, long argc, t_atom *argv) {
+    if (argc < 3) {
+        post_error(x, "dataframe: apply requires <col> <op> <value>");
+        return;
+    }
+
+    const char *col_name = atom_getsym(argv)->s_name;
+    const char *op = atom_getsym(argv + 1)->s_name;
+    double value = atom_getfloat(argv + 2);
+
+    if (!require_double_col(x, col_name)) return;
+
+    std::string op_str(op);
+    if (op_str != "+" && op_str != "-" && op_str != "*" && op_str != "/") {
+        post_error(x, "dataframe: unknown operator '%s' (use +, -, *, /)", op);
+        return;
+    }
+
+    if (op_str == "/" && value == 0.0) {
+        post_error(x, "dataframe: division by zero");
+        return;
+    }
+
+    try {
+        auto &col = x->store->df.get_column<double>(col_name);
+        for (size_t i = 0; i < col.size(); i++) {
+            if (op_str == "+") col[i] += value;
+            else if (op_str == "-") col[i] -= value;
+            else if (op_str == "*") col[i] *= value;
+            else if (op_str == "/") col[i] /= value;
+        }
+
+        post_info(x, "dataframe: applied %s %g to '%s' (%zu values)",
+                  op, value, col_name, col.size());
+        outlet_bang(x->outlet_info);
+    } catch (const std::exception &e) {
+        post_error(x, "dataframe: apply failed: %s", e.what());
+    }
+}
+
+// --------------------------------------------------------------------------
+// Reshape: melt, pivot, transpose
+// --------------------------------------------------------------------------
+
+// melt <id_col> [val_col1 val_col2 ...]
+// Wide-to-long: unpivot value columns into (variable, values) pairs.
+static void dataframe_melt(t_dataframe *x, t_symbol *s, long argc, t_atom *argv) {
+    if (argc < 1) {
+        post_error(x, "dataframe: melt requires <id_col> [val_col1 val_col2 ...]");
+        return;
+    }
+
+    const char *id_col = atom_getsym(argv)->s_name;
+
+    if (!has_col(x, id_col)) {
+        post_error(x, "dataframe: column '%s' not found", id_col);
+        return;
+    }
+
+    // Collect optional value column names
+    std::vector<const char *> val_cols;
+    for (long i = 1; i < argc; i++) {
+        const char *vn = atom_getsym(argv + i)->s_name;
+        if (!has_col(x, vn)) {
+            post_error(x, "dataframe: column '%s' not found", vn);
+            return;
+        }
+        if (get_col_type(x, vn) != col_type::DOUBLE) {
+            post_error(x, "dataframe: melt value column '%s' must be double", vn);
+            return;
+        }
+        val_cols.push_back(vn);
+    }
+
+    try {
+        auto id_ct = get_col_type(x, id_col);
+        ULDataFrame result;
+
+        switch (id_ct) {
+            case col_type::DOUBLE:
+                result = x->store->df.unpivot<double, double>(
+                    id_col, std::move(val_cols));
+                break;
+            case col_type::LONG:
+                result = x->store->df.unpivot<long, double>(
+                    id_col, std::move(val_cols));
+                break;
+            case col_type::STRING:
+                result = x->store->df.unpivot<std::string, double>(
+                    id_col, std::move(val_cols));
+                break;
+        }
+
+        x->store->df = std::move(result);
+        detect_column_types(x);
+
+        auto nrows = x->store->df.get_index().size();
+        auto ncols = x->store->col_types.size();
+        post_info(x, "dataframe: melt on '%s': %zu rows x %zu columns",
+                  id_col, nrows, ncols);
+        outlet_bang(x->outlet_info);
+    } catch (const std::exception &e) {
+        post_error(x, "dataframe: melt failed: %s", e.what());
+    }
+}
+
+// pivot <names_col> <val_col1> [val_col2 ...]
+// Long-to-wide: spread repeating values in names_col into new columns.
+static void dataframe_pivot(t_dataframe *x, t_symbol *s, long argc, t_atom *argv) {
+    if (argc < 2) {
+        post_error(x, "dataframe: pivot requires <names_col> <val_col1> [val_col2 ...]");
+        return;
+    }
+
+    const char *names_col = atom_getsym(argv)->s_name;
+
+    if (!has_col(x, names_col)) {
+        post_error(x, "dataframe: column '%s' not found", names_col);
+        return;
+    }
+    if (get_col_type(x, names_col) != col_type::STRING) {
+        post_error(x, "dataframe: pivot names column '%s' must be string", names_col);
+        return;
+    }
+
+    std::vector<const char *> val_cols;
+    for (long i = 1; i < argc; i++) {
+        const char *vn = atom_getsym(argv + i)->s_name;
+        if (!has_col(x, vn)) {
+            post_error(x, "dataframe: column '%s' not found", vn);
+            return;
+        }
+        if (get_col_type(x, vn) != col_type::DOUBLE) {
+            post_error(x, "dataframe: pivot value column '%s' must be double", vn);
+            return;
+        }
+        val_cols.push_back(vn);
+    }
+
+    try {
+        auto result = x->store->df.pivot<double>(
+            names_col, std::move(val_cols));
+
+        x->store->df = std::move(result);
+        detect_column_types(x);
+
+        auto nrows = x->store->df.get_index().size();
+        auto ncols = x->store->col_types.size();
+        post_info(x, "dataframe: pivot on '%s': %zu rows x %zu columns",
+                  names_col, nrows, ncols);
+        outlet_bang(x->outlet_info);
+    } catch (const std::exception &e) {
+        post_error(x, "dataframe: pivot failed: %s", e.what());
+    }
+}
+
+// transpose (no arguments)
+// Transpose all-double DataFrame: rows become columns, columns become rows.
+static void dataframe_transpose(t_dataframe *x, t_symbol *s, long argc, t_atom *argv) {
+    auto &store = *x->store;
+
+    if (store.col_types.empty()) {
+        post_error(x, "dataframe: transpose requires a non-empty DataFrame");
+        return;
+    }
+
+    // All columns must be double
+    for (auto &pair : store.col_types) {
+        if (pair.second != col_type::DOUBLE) {
+            post_error(x, "dataframe: transpose requires all columns to be double "
+                       "(column '%s' is not)", pair.first.c_str());
+            return;
+        }
+    }
+
+    try {
+        auto col_names = get_column_names(x);
+        size_t nrows = store.df.get_index().size();
+        size_t ncols = col_names.size();
+
+        // New index: one entry per old column
+        std::vector<unsigned long> new_idx(ncols);
+        for (size_t i = 0; i < ncols; i++)
+            new_idx[i] = static_cast<unsigned long>(i);
+
+        // New column names: "row_0", "row_1", ...
+        std::vector<std::string> new_col_names(nrows);
+        for (size_t i = 0; i < nrows; i++)
+            new_col_names[i] = "row_" + std::to_string(i);
+
+        auto result = store.df.transpose<double>(
+            std::move(new_idx), new_col_names);
+
+        store.df = std::move(result);
+        detect_column_types(x);
+
+        auto out_nrows = store.df.get_index().size();
+        auto out_ncols = store.col_types.size();
+        post_info(x, "dataframe: transposed: %zu rows x %zu columns",
+                  out_nrows, out_ncols);
+        outlet_bang(x->outlet_info);
+    } catch (const std::exception &e) {
+        post_error(x, "dataframe: transpose failed: %s", e.what());
+    }
+}
+
+// --------------------------------------------------------------------------
+// Dict Interop
+// --------------------------------------------------------------------------
+
+// todict [name]
+// Export DataFrame contents as a Max dict.
+static void dataframe_todict(t_dataframe *x, t_symbol *s, long argc, t_atom *argv) {
+    try {
+        t_dictionary *d = dictionary_new();
+        if (!d) {
+            post_error(x, "dataframe: failed to create dictionary");
+            return;
+        }
+
+        auto &store = *x->store;
+        auto col_names = get_column_names(x);
+
+        for (auto &name : col_names) {
+            auto ct = store.col_types[name];
+            switch (ct) {
+                case col_type::DOUBLE: {
+                    auto &col = store.df.get_column<double>(name.c_str());
+                    std::vector<t_atom> atoms(col.size());
+                    for (size_t i = 0; i < col.size(); i++)
+                        atom_setfloat(&atoms[i], col[i]);
+                    dictionary_appendatoms(d, gensym(name.c_str()),
+                                           static_cast<long>(atoms.size()), atoms.data());
+                    break;
+                }
+                case col_type::LONG: {
+                    auto &col = store.df.get_column<long>(name.c_str());
+                    std::vector<t_atom> atoms(col.size());
+                    for (size_t i = 0; i < col.size(); i++)
+                        atom_setlong(&atoms[i], col[i]);
+                    dictionary_appendatoms(d, gensym(name.c_str()),
+                                           static_cast<long>(atoms.size()), atoms.data());
+                    break;
+                }
+                case col_type::STRING: {
+                    auto &col = store.df.get_column<std::string>(name.c_str());
+                    std::vector<t_atom> atoms(col.size());
+                    for (size_t i = 0; i < col.size(); i++)
+                        atom_setsym(&atoms[i], gensym(col[i].c_str()));
+                    dictionary_appendatoms(d, gensym(name.c_str()),
+                                           static_cast<long>(atoms.size()), atoms.data());
+                    break;
+                }
+            }
+        }
+
+        t_symbol *dict_name = nullptr;
+        if (argc >= 1 && atom_gettype(argv) == A_SYM)
+            dict_name = atom_getsym(argv);
+
+        dictobj_register(d, &dict_name);
+
+        t_atom name_atom;
+        atom_setsym(&name_atom, dict_name);
+        outlet_anything(x->outlet_data, gensym("dictionary"), 1, &name_atom);
+        outlet_bang(x->outlet_info);
+
+        post_info(x, "dataframe: exported to dict '%s'", dict_name->s_name);
+    } catch (const std::exception &e) {
+        post_error(x, "dataframe: todict failed: %s", e.what());
     }
 }

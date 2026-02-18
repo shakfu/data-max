@@ -12,13 +12,18 @@ Pandas-like columnar data manipulation in Max. Uses named instances (like `coll`
 
 | Category | Messages | Description |
 |---|---|---|
-| I/O | `read <file>`, `write <file>`, `clear` | Read/write CSV, JSON, or XLSX. File lookup uses the Max search path. |
+| I/O | `read <file> [sheet]`, `write <file>`, `clear` | Read/write CSV, JSON, or XLSX. Optional sheet name for multi-sheet XLSX. File lookup uses the Max search path. Read/write run on a background thread. |
 | Inspection | `bang`, `columns`, `shape`, `head <n>`, `tail <n>`, `getcol <col>` | Query structure and contents. |
-| Statistics | `mean <col>`, `median <col>`, `std <col>`, `var <col>`, `sum <col>`, `min <col>`, `max <col>`, `count <col>`, `describe <col>` | Descriptive statistics on numeric columns. |
+| Statistics | `mean <col>`, `median <col>`, `std <col>`, `var <col>`, `sum <col>`, `min <col>`, `max <col>`, `count <col>`, `describe <col>`, `corr <col1> <col2>`, `quantile <col> <value>` | Descriptive statistics on numeric columns (double and long). |
 | Filtering | `sel <col> <op> <value>` | Filter rows in-place. Operators: `>`, `<`, `>=`, `<=`, `==`, `!=`. |
 | Sorting | `sort <col> [asc\|desc]` | Sort rows by column (default ascending). |
 | Groupby | `groupby <col> <agg> <val_col>` | Group by column, aggregate with `sum`, `mean`, `count`, `min`, `max`. |
 | Join | `join <name> <col> [inner\|left\|right\|outer]` | Join with another named dataframe by a shared column. |
+| Fill | `fill_missing <col> <policy> [value]` | Fill missing/NaN values. Policies: `forward`, `backward`, `value <v>`, `linear`, `midpoint`. |
+| Curve Fit | `curvefit <type> <x_col> <y_col> [degree]` | Fit curves to data. Types: `linear`, `poly`, `exp`, `log`, `spline`. Outputs coefficients as list. |
+| Apply | `apply <col> <op> <value>` | Apply arithmetic operation in-place. Operators: `+`, `-`, `*`, `/`. |
+| Reshape | `melt <id_col> [val_col1 ...]`, `pivot <names_col> <val_col1> [...]`, `transpose` | Reshape: wide-to-long, long-to-wide, matrix transpose (all-double). |
+| Dict | `todict [name]` | Export DataFrame as a Max `dict`. Outputs dict name from data outlet. |
 
 **Outlets:** left = data (lists, floats, symbols), right = info (bang on completion, shape, errors).
 

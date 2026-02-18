@@ -12,7 +12,7 @@ DMG=$(PACKAGE_NAME)-$(VERSION)-$(ARCH).dmg
 ENTITLEMENTS = source/scripts/entitlements.plist
 VERSION=0.1.0
 
-.PHONY: all install_deps build universal setup clean reset
+.PHONY: all install_deps build universal setup clean reset test
 
 all: build
 
@@ -36,6 +36,9 @@ universal: install_deps
 		cmake --build . --config '$(CONFIG)' && \
 		cmake --install . --config '$(CONFIG)'
 
+
+test: build
+	@$(BUILD)/tests/test_dataframe
 
 install_deps:
 	./source/scripts/install_deps.sh
