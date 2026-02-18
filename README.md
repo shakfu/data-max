@@ -8,14 +8,17 @@ A [Max](https://cycling74.com/products/max) package providing data-oriented exte
 
 Pandas-like columnar data manipulation in Max. Uses named instances (like `coll` and `buffer~`) so multiple objects sharing a name share the same data.
 
-**Supported column types:** double, long, string (auto-detected on CSV import).
+**Supported column types:** double, long, string (auto-detected on import).
 
 | Category | Messages | Description |
 |---|---|---|
-| I/O | `read <file>`, `write <file>`, `clear` | Read/write plain CSV or JSON. File lookup uses the Max search path. |
+| I/O | `read <file>`, `write <file>`, `clear` | Read/write CSV, JSON, or XLSX. File lookup uses the Max search path. |
 | Inspection | `bang`, `columns`, `shape`, `head <n>`, `tail <n>`, `getcol <col>` | Query structure and contents. |
 | Statistics | `mean <col>`, `median <col>`, `std <col>`, `var <col>`, `sum <col>`, `min <col>`, `max <col>`, `count <col>`, `describe <col>` | Descriptive statistics on numeric columns. |
 | Filtering | `sel <col> <op> <value>` | Filter rows in-place. Operators: `>`, `<`, `>=`, `<=`, `==`, `!=`. |
+| Sorting | `sort <col> [asc\|desc]` | Sort rows by column (default ascending). |
+| Groupby | `groupby <col> <agg> <val_col>` | Group by column, aggregate with `sum`, `mean`, `count`, `min`, `max`. |
+| Join | `join <name> <col> [inner\|left\|right\|outer]` | Join with another named dataframe by a shared column. |
 
 **Outlets:** left = data (lists, floats, symbols), right = info (bang on completion, shape, errors).
 
@@ -49,7 +52,8 @@ source/
     DataFrame/      # vendored DataFrame library (C++23)
   max-sdk-base/     # Max SDK (git submodule)
 examples/
-  sample.csv        # sample data for testing
+  sample.csv        # student scores (CSV)
+  sample.xlsx       # world cities (XLSX)
 help/
   dataframe.maxhelp # help patch for dataframe
   xlsxw.maxhelp     # help patch for xlsxw
@@ -60,5 +64,5 @@ help/
 | Library | Purpose | Integration |
 |---|---|---|
 | [DataFrame](https://github.com/hosseinmoein/DataFrame) | Columnar data, statistics, filtering | Vendored, compiled into `dataframe` external |
-| [libxlsxwriter](https://github.com/jmcnamara/libxlsxwriter) | `.xlsx` file writing | Built by `install_deps.sh` |
-| [OpenXLSX](https://github.com/troldal/OpenXLSX) | `.xlsx` file reading | Built by `install_deps.sh` |
+| [libxlsxwriter](https://github.com/jmcnamara/libxlsxwriter) | `.xlsx` file writing | Built by `install_deps.sh`, linked into `dataframe` and `xlsxw` |
+| [OpenXLSX](https://github.com/troldal/OpenXLSX) | `.xlsx` file reading | Built by `install_deps.sh`, linked into `dataframe` |

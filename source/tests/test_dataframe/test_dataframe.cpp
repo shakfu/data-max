@@ -1,5 +1,10 @@
 #include <DataFrame/DataFrame.h>
 #include <DataFrame/DataFrameStatsVisitors.h>
+#include <OpenXLSX/OpenXLSX.hpp>
+
+extern "C" {
+#include "xlsxwriter.h"
+}
 
 #include <cassert>
 #include <cmath>
@@ -165,6 +170,314 @@ static void test_read_sample_csv() {
     std::cout << "PASSED" << std::endl;
 }
 
+static void test_sort() {
+    std::cout << "test_sort... ";
+
+    ULDataFrame df;
+
+    std::vector<unsigned long> idx = {0, 1, 2, 3, 4};
+    std::vector<double> vals = {30.0, 10.0, 50.0, 20.0, 40.0};
+    std::vector<std::string> names = {"c", "a", "e", "b", "d"};
+
+    df.load_index(std::move(idx));
+    df.load_column("values", std::move(vals));
+    df.load_column("names", std::move(names));
+
+    // Sort ascending by values
+    df.sort<double, double, std::string>("values", sort_spec::ascen);
+
+    auto &sorted_vals = df.get_column<double>("values");
+    assert(approx(sorted_vals[0], 10.0));
+    assert(approx(sorted_vals[1], 20.0));
+    assert(approx(sorted_vals[2], 30.0));
+    assert(approx(sorted_vals[3], 40.0));
+    assert(approx(sorted_vals[4], 50.0));
+
+    // Names should follow the sort
+    auto &sorted_names = df.get_column<std::string>("names");
+    assert(sorted_names[0] == "a");
+    assert(sorted_names[4] == "e");
+
+    // Sort descending by names
+    df.sort<std::string, double, std::string>("names", sort_spec::desce);
+
+    auto &desc_names = df.get_column<std::string>("names");
+    assert(desc_names[0] == "e");
+    assert(desc_names[4] == "a");
+
+    // Values should follow
+    auto &desc_vals = df.get_column<double>("values");
+    assert(approx(desc_vals[0], 50.0));
+    assert(approx(desc_vals[4], 10.0));
+
+    std::cout << "PASSED" << std::endl;
+}
+
+static void test_groupby() {
+    std::cout << "test_groupby... ";
+
+    // Simulate what dataframe_groupby does manually
+    ULDataFrame df;
+    std::vector<unsigned long> idx = {0, 1, 2, 3, 4, 5};
+    std::vector<std::string> categories = {"A", "B", "A", "B", "A", "B"};
+    std::vector<double> values = {10.0, 20.0, 30.0, 40.0, 50.0, 60.0};
+
+    df.load_index(std::move(idx));
+    df.load_column("cat", std::move(categories));
+    df.load_column("val", std::move(values));
+
+    // Manual groupby sum
+    auto &cats = df.get_column<std::string>("cat");
+    auto &vals = df.get_column<double>("val");
+
+    std::vector<std::string> unique_keys;
+    std::unordered_map<std::string, std::vector<size_t>> groups;
+    for (size_t i = 0; i < cats.size(); i++) {
+        if (groups.find(cats[i]) == groups.end())
+            unique_keys.push_back(cats[i]);
+        groups[cats[i]].push_back(i);
+    }
+
+    assert(unique_keys.size() == 2);
+    assert(unique_keys[0] == "A");
+    assert(unique_keys[1] == "B");
+
+    // Sum for A: 10+30+50 = 90, B: 20+40+60 = 120
+    double sum_a = 0, sum_b = 0;
+    for (auto i : groups["A"]) sum_a += vals[i];
+    for (auto i : groups["B"]) sum_b += vals[i];
+    assert(approx(sum_a, 90.0));
+    assert(approx(sum_b, 120.0));
+
+    // Mean for A: 30, B: 40
+    double mean_a = sum_a / groups["A"].size();
+    double mean_b = sum_b / groups["B"].size();
+    assert(approx(mean_a, 30.0));
+    assert(approx(mean_b, 40.0));
+
+    // Count for A: 3, B: 3
+    assert(groups["A"].size() == 3);
+    assert(groups["B"].size() == 3);
+
+    std::cout << "PASSED" << std::endl;
+}
+
+static void test_join() {
+    std::cout << "test_join... ";
+
+    // LHS: people with department IDs
+    ULDataFrame lhs;
+    std::vector<unsigned long> idx1 = {0, 1, 2, 3};
+    std::vector<std::string> names = {"Alice", "Bob", "Carol", "Dave"};
+    std::vector<long> dept_ids = {1, 2, 1, 3};
+
+    lhs.load_index(std::move(idx1));
+    lhs.load_column("name", std::move(names));
+    lhs.load_column("dept_id", std::move(dept_ids));
+
+    // RHS: departments
+    ULDataFrame rhs;
+    std::vector<unsigned long> idx2 = {0, 1, 2};
+    std::vector<long> dept_ids2 = {1, 2, 3};
+    std::vector<std::string> dept_names = {"Engineering", "Marketing", "Sales"};
+
+    rhs.load_index(std::move(idx2));
+    rhs.load_column("dept_id", std::move(dept_ids2));
+    rhs.load_column("dept_name", std::move(dept_names));
+
+    // Inner join by dept_id
+    auto joined = lhs.join_by_column<ULDataFrame, long,
+        std::string, long>(rhs, "dept_id", join_policy::inner_join);
+
+    // Should have 4 rows (all dept_ids match)
+    assert(joined.get_index().size() == 4);
+
+    // Should have columns from both sides
+    auto &j_names = joined.get_column<std::string>("name");
+    auto &j_depts = joined.get_column<std::string>("dept_name");
+    auto &j_ids = joined.get_column<long>("dept_id");
+
+    // Verify join correctness: each name maps to correct department
+    for (size_t i = 0; i < j_names.size(); i++) {
+        if (j_names[i] == "Alice" || j_names[i] == "Carol")
+            assert(j_depts[i] == "Engineering");
+        else if (j_names[i] == "Bob")
+            assert(j_depts[i] == "Marketing");
+        else if (j_names[i] == "Dave")
+            assert(j_depts[i] == "Sales");
+    }
+
+    std::cout << "PASSED" << std::endl;
+}
+
+static void test_xlsx_write_read_roundtrip() {
+    std::cout << "test_xlsx_write_read_roundtrip... ";
+
+    // Write an xlsx file using libxlsxwriter
+    const char *xlsx_path = "/tmp/test_dataframe_roundtrip.xlsx";
+
+    lxw_workbook *wb = workbook_new(xlsx_path);
+    lxw_worksheet *ws = workbook_add_worksheet(wb, nullptr);
+
+    // Header
+    worksheet_write_string(ws, 0, 0, "name", nullptr);
+    worksheet_write_string(ws, 0, 1, "age", nullptr);
+    worksheet_write_string(ws, 0, 2, "score", nullptr);
+
+    // Data rows
+    worksheet_write_string(ws, 1, 0, "Alice", nullptr);
+    worksheet_write_number(ws, 1, 1, 25, nullptr);
+    worksheet_write_number(ws, 1, 2, 92.5, nullptr);
+
+    worksheet_write_string(ws, 2, 0, "Bob", nullptr);
+    worksheet_write_number(ws, 2, 1, 30, nullptr);
+    worksheet_write_number(ws, 2, 2, 87.3, nullptr);
+
+    worksheet_write_string(ws, 3, 0, "Carol", nullptr);
+    worksheet_write_number(ws, 3, 1, 22, nullptr);
+    worksheet_write_number(ws, 3, 2, 95.1, nullptr);
+
+    lxw_error err = workbook_close(wb);
+    assert(err == LXW_NO_ERROR);
+
+    // Read it back using OpenXLSX
+    OpenXLSX::XLDocument doc;
+    doc.open(xlsx_path);
+
+    auto workbook = doc.workbook();
+    assert(workbook.worksheetCount() >= 1);
+
+    auto worksheet = workbook.worksheet(1);
+    assert(worksheet.rowCount() == 4);   // 1 header + 3 data
+    assert(worksheet.columnCount() == 3);
+
+    // Check header
+    {
+        auto c = worksheet.cell(1, 1);
+        const auto &v = c.value();
+        assert(v.type() == OpenXLSX::XLValueType::String);
+        assert(v.get<std::string>() == "name");
+    }
+
+    // Check data types and values
+    {
+        auto c = worksheet.cell(2, 1);
+        const auto &v = c.value();
+        assert(v.type() == OpenXLSX::XLValueType::String);
+        assert(v.get<std::string>() == "Alice");
+    }
+
+    {
+        auto c = worksheet.cell(2, 2);
+        const auto &v = c.value();
+        // libxlsxwriter writes all numbers as doubles
+        assert(v.type() == OpenXLSX::XLValueType::Float ||
+               v.type() == OpenXLSX::XLValueType::Integer);
+        assert(approx(v.get<double>(), 25.0));
+    }
+
+    {
+        auto c = worksheet.cell(2, 3);
+        const auto &v = c.value();
+        assert(v.type() == OpenXLSX::XLValueType::Float ||
+               v.type() == OpenXLSX::XLValueType::Integer);
+        assert(approx(v.get<double>(), 92.5));
+    }
+
+    doc.close();
+    std::cout << "PASSED" << std::endl;
+}
+
+static void test_xlsx_to_dataframe() {
+    std::cout << "test_xlsx_to_dataframe... ";
+
+    // Write a test xlsx
+    const char *xlsx_path = "/tmp/test_dataframe_load.xlsx";
+
+    lxw_workbook *wb = workbook_new(xlsx_path);
+    lxw_worksheet *ws = workbook_add_worksheet(wb, nullptr);
+
+    worksheet_write_string(ws, 0, 0, "city", nullptr);
+    worksheet_write_string(ws, 0, 1, "population", nullptr);
+    worksheet_write_string(ws, 0, 2, "area", nullptr);
+
+    worksheet_write_string(ws, 1, 0, "Tokyo", nullptr);
+    worksheet_write_number(ws, 1, 1, 13960000, nullptr);
+    worksheet_write_number(ws, 1, 2, 2194.0, nullptr);
+
+    worksheet_write_string(ws, 2, 0, "London", nullptr);
+    worksheet_write_number(ws, 2, 1, 8982000, nullptr);
+    worksheet_write_number(ws, 2, 2, 1572.0, nullptr);
+
+    workbook_close(wb);
+
+    // Read into DataFrame using OpenXLSX (simulating what read_xlsx does)
+    OpenXLSX::XLDocument doc;
+    doc.open(xlsx_path);
+    auto worksheet = doc.workbook().worksheet(1);
+
+    uint32_t nrows_total = worksheet.rowCount();
+    uint16_t ncols = worksheet.columnCount();
+    assert(nrows_total == 3);  // 1 header + 2 data
+    assert(ncols == 3);
+
+    // Read headers
+    std::vector<std::string> headers(ncols);
+    for (uint16_t col = 1; col <= ncols; col++) {
+        auto c = worksheet.cell(1, col);
+        headers[col - 1] = c.value().get<std::string>();
+    }
+    assert(headers[0] == "city");
+    assert(headers[1] == "population");
+    assert(headers[2] == "area");
+
+    // Build a DataFrame from the xlsx data
+    ULDataFrame df;
+    uint32_t nrows = nrows_total - 1;
+    std::vector<unsigned long> idx(nrows);
+    for (uint32_t i = 0; i < nrows; i++) idx[i] = i;
+    df.load_index(std::move(idx));
+
+    // city column (strings)
+    std::vector<std::string> cities(nrows);
+    for (uint32_t r = 0; r < nrows; r++) {
+        auto c = worksheet.cell(r + 2, 1);
+        cities[r] = c.value().get<std::string>();
+    }
+    df.load_column("city", std::move(cities));
+
+    // population column (numbers)
+    std::vector<double> pops(nrows);
+    for (uint32_t r = 0; r < nrows; r++) {
+        auto c = worksheet.cell(r + 2, 2);
+        pops[r] = c.value().get<double>();
+    }
+    df.load_column("population", std::move(pops));
+
+    // area column (numbers)
+    std::vector<double> areas(nrows);
+    for (uint32_t r = 0; r < nrows; r++) {
+        auto c = worksheet.cell(r + 2, 3);
+        areas[r] = c.value().get<double>();
+    }
+    df.load_column("area", std::move(areas));
+
+    doc.close();
+
+    // Verify
+    assert(df.get_index().size() == 2);
+    assert(df.get_column<std::string>("city")[0] == "Tokyo");
+    assert(approx(df.get_column<double>("population")[0], 13960000.0));
+    assert(approx(df.get_column<double>("area")[1], 1572.0));
+
+    // Compute stats
+    MeanVisitor<double, unsigned long> mean_v;
+    df.visit<double>("area", mean_v);
+    assert(approx(mean_v.get_result(), (2194.0 + 1572.0) / 2.0));
+
+    std::cout << "PASSED" << std::endl;
+}
+
 int main() {
     std::cout << "DataFrame integration tests" << std::endl;
     std::cout << "===========================" << std::endl;
@@ -173,8 +486,11 @@ int main() {
     test_csv_io();
     test_statistics();
     test_filter();
-    // test_read_sample_csv requires running from project root
-    // test_read_sample_csv();
+    test_sort();
+    test_groupby();
+    test_join();
+    test_xlsx_write_read_roundtrip();
+    test_xlsx_to_dataframe();
 
     std::cout << std::endl;
     std::cout << "All tests passed." << std::endl;

@@ -17,9 +17,9 @@
 The v1 `dataframe` external is implemented and provides: named instances, plain CSV/JSON I/O, column access, descriptive statistics (mean, median, std, var, sum, min, max, count, describe), and row filtering (sel). Potential v2 additions:
 
 - **xlsx I/O** -- Read/write `.xlsx` directly, leveraging the existing libxlsxwriter and OpenXLSX dependencies. Subsumes the standalone `xlsxr` idea.
-- **sort** -- Sort by one or more columns (ascending/descending). DataFrame library supports multi-column sort.
-- **groupby** -- Group-by with aggregation (sum, mean, count per group). Maps to DataFrame's `groupby1`/`groupby2`.
-- **merge/join** -- Join two named DataFrames by a shared column. DataFrame supports inner/outer/left/right joins.
+- ~~**sort**~~ -- Implemented. Single-column sort (ascending/descending) via `sort <col> [asc|desc]`.
+- ~~**groupby**~~ -- Implemented. `groupby <col> <agg> <val_col>` with sum, mean, count, min, max.
+- ~~**merge/join**~~ -- Implemented. `join <name> <col> [inner|left|right|outer]` via DataFrame's `join_by_column`.
 - **apply** -- Apply a Max expression or lambda to each row or column (e.g., `apply score * 1.1`).
 - **corr** -- Pairwise correlation between two columns. DataFrame has `CorrVisitor`.
 - **quantile** -- Arbitrary quantile queries (e.g., `quantile score 0.25`). DataFrame has `QuantileVisitor`.

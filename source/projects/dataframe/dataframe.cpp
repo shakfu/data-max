@@ -10,6 +10,12 @@ extern "C" {
 #include <DataFrame/DataFrame.h>
 #include <DataFrame/DataFrameStatsVisitors.h>
 
+#include <OpenXLSX/OpenXLSX.hpp>
+
+extern "C" {
+#include "xlsxwriter.h"
+}
+
 #include <algorithm>
 #include <cmath>
 #include <fstream>
@@ -79,6 +85,15 @@ static void dataframe_count(t_dataframe *x, t_symbol *s);
 
 // Filtering
 static void dataframe_sel(t_dataframe *x, t_symbol *s, long argc, t_atom *argv);
+
+// Sorting
+static void dataframe_sort(t_dataframe *x, t_symbol *s, long argc, t_atom *argv);
+
+// Groupby
+static void dataframe_groupby(t_dataframe *x, t_symbol *s, long argc, t_atom *argv);
+
+// Join
+static void dataframe_join(t_dataframe *x, t_symbol *s, long argc, t_atom *argv);
 
 // --------------------------------------------------------------------------
 // Helpers
@@ -400,6 +415,184 @@ static bool write_plain_csv(t_dataframe *x, const std::string &path) {
     return true;
 }
 
+// Read an xlsx file into the DataFrame using OpenXLSX.
+static bool read_xlsx(t_dataframe *x, const std::string &path) {
+    OpenXLSX::XLDocument doc;
+    doc.open(path);
+
+    auto wb = doc.workbook();
+    if (wb.worksheetCount() == 0) return false;
+
+    auto ws = wb.worksheet(1);  // 1-based index
+    uint32_t nrows_total = ws.rowCount();
+    uint16_t ncols = ws.columnCount();
+    if (nrows_total < 1 || ncols == 0) return false;
+
+    // First row = headers
+    std::vector<std::string> headers(ncols);
+    for (uint16_t col = 1; col <= ncols; col++) {
+        auto cell = ws.cell(1, col);
+        const auto &val = cell.value();
+        if (val.type() == OpenXLSX::XLValueType::String)
+            headers[col - 1] = val.get<std::string>();
+        else
+            headers[col - 1] = cell.getString();
+    }
+
+    uint32_t nrows = nrows_total - 1;  // data rows (excluding header)
+    if (nrows == 0) {
+        // Empty spreadsheet with only headers
+        auto &store = *x->store;
+        store.df = ULDataFrame();
+        store.col_types.clear();
+        std::vector<unsigned long> idx;
+        store.df.load_index(std::move(idx));
+        for (uint16_t col = 0; col < ncols; col++) {
+            std::vector<std::string> empty;
+            store.df.load_column(headers[col].c_str(), std::move(empty));
+            store.col_types[headers[col]] = col_type::STRING;
+        }
+        doc.close();
+        return true;
+    }
+
+    // Read all cell values as strings, and track types per column
+    // Start with LONG, promote to DOUBLE if mixed, STRING if non-numeric
+    std::vector<col_type> types(ncols, col_type::LONG);
+    std::vector<std::vector<std::string>> raw(ncols, std::vector<std::string>(nrows));
+
+    for (uint32_t row = 2; row <= nrows_total; row++) {
+        for (uint16_t col = 1; col <= ncols; col++) {
+            auto cell = ws.cell(row, col);
+            const auto &val = cell.value();
+            uint16_t ci = col - 1;
+            uint32_t ri = row - 2;
+
+            switch (val.type()) {
+                case OpenXLSX::XLValueType::Integer:
+                    raw[ci][ri] = std::to_string(val.get<int64_t>());
+                    // LONG stays LONG
+                    break;
+                case OpenXLSX::XLValueType::Float:
+                    raw[ci][ri] = std::to_string(val.get<double>());
+                    if (types[ci] == col_type::LONG)
+                        types[ci] = col_type::DOUBLE;
+                    break;
+                case OpenXLSX::XLValueType::Boolean:
+                    raw[ci][ri] = val.get<bool>() ? "1" : "0";
+                    break;
+                case OpenXLSX::XLValueType::String:
+                    raw[ci][ri] = val.get<std::string>();
+                    types[ci] = col_type::STRING;
+                    break;
+                case OpenXLSX::XLValueType::Empty:
+                    raw[ci][ri] = "";
+                    break;
+                default:
+                    raw[ci][ri] = "";
+                    types[ci] = col_type::STRING;
+                    break;
+            }
+        }
+    }
+
+    doc.close();
+
+    // Build DataFrame
+    auto &store = *x->store;
+    store.df = ULDataFrame();
+    store.col_types.clear();
+
+    std::vector<unsigned long> idx(nrows);
+    for (uint32_t i = 0; i < nrows; i++) idx[i] = static_cast<unsigned long>(i);
+    store.df.load_index(std::move(idx));
+
+    for (uint16_t col = 0; col < ncols; col++) {
+        const auto &name = headers[col];
+        switch (types[col]) {
+            case col_type::DOUBLE: {
+                std::vector<double> vec(nrows);
+                for (uint32_t row = 0; row < nrows; row++) {
+                    try { vec[row] = std::stod(raw[col][row]); }
+                    catch (...) { vec[row] = 0.0; }
+                }
+                store.df.load_column(name.c_str(), std::move(vec));
+                store.col_types[name] = col_type::DOUBLE;
+                break;
+            }
+            case col_type::LONG: {
+                std::vector<long> vec(nrows);
+                for (uint32_t row = 0; row < nrows; row++) {
+                    try { vec[row] = std::stol(raw[col][row]); }
+                    catch (...) { vec[row] = 0; }
+                }
+                store.df.load_column(name.c_str(), std::move(vec));
+                store.col_types[name] = col_type::LONG;
+                break;
+            }
+            case col_type::STRING: {
+                std::vector<std::string> vec(nrows);
+                for (uint32_t row = 0; row < nrows; row++) {
+                    vec[row] = raw[col][row];
+                }
+                store.df.load_column(name.c_str(), std::move(vec));
+                store.col_types[name] = col_type::STRING;
+                break;
+            }
+        }
+    }
+
+    return true;
+}
+
+// Write the DataFrame as an xlsx file using libxlsxwriter.
+static bool write_xlsx(t_dataframe *x, const std::string &path) {
+    auto &store = *x->store;
+    auto col_names = get_column_names(x);
+    size_t ncols = col_names.size();
+    size_t nrows = store.df.get_index().size();
+
+    lxw_workbook *wb = workbook_new(path.c_str());
+    if (!wb) return false;
+    lxw_worksheet *ws = workbook_add_worksheet(wb, nullptr);
+
+    // Write header row
+    for (size_t col = 0; col < ncols; col++) {
+        worksheet_write_string(ws, 0, static_cast<lxw_col_t>(col),
+                               col_names[col].c_str(), nullptr);
+    }
+
+    // Write data rows
+    for (size_t row = 0; row < nrows; row++) {
+        lxw_row_t r = static_cast<lxw_row_t>(row + 1);
+        for (size_t col = 0; col < ncols; col++) {
+            lxw_col_t c = static_cast<lxw_col_t>(col);
+            const auto &name = col_names[col];
+            switch (store.col_types[name]) {
+                case col_type::DOUBLE: {
+                    auto &data = store.df.get_column<double>(name.c_str());
+                    worksheet_write_number(ws, r, c, data[row], nullptr);
+                    break;
+                }
+                case col_type::LONG: {
+                    auto &data = store.df.get_column<long>(name.c_str());
+                    worksheet_write_number(ws, r, c,
+                                           static_cast<double>(data[row]), nullptr);
+                    break;
+                }
+                case col_type::STRING: {
+                    auto &data = store.df.get_column<std::string>(name.c_str());
+                    worksheet_write_string(ws, r, c, data[row].c_str(), nullptr);
+                    break;
+                }
+            }
+        }
+    }
+
+    lxw_error err = workbook_close(wb);
+    return err == LXW_NO_ERROR;
+}
+
 // --------------------------------------------------------------------------
 // ext_main
 // --------------------------------------------------------------------------
@@ -435,6 +628,15 @@ extern "C" void ext_main(void *r) {
 
     // Filtering
     class_addmethod(c, (method)dataframe_sel,    "sel",    A_GIMME, 0);
+
+    // Sorting
+    class_addmethod(c, (method)dataframe_sort,   "sort",   A_GIMME, 0);
+
+    // Groupby
+    class_addmethod(c, (method)dataframe_groupby, "groupby", A_GIMME, 0);
+
+    // Join
+    class_addmethod(c, (method)dataframe_join,   "join",   A_GIMME, 0);
 
     // Assist
     class_addmethod(c, (method)dataframe_assist, "assist", A_CANT, 0);
@@ -497,7 +699,7 @@ static void dataframe_assist(t_dataframe *x, void *b, long m, long a, char *s) {
     if (m == ASSIST_INLET) {
         snprintf(s, 256, "messages: read, write, clear, bang, columns, shape, "
                  "head, tail, getcol, mean, median, std, var, sum, min, max, "
-                 "count, describe, sel");
+                 "count, describe, sel, sort, groupby, join");
     } else {
         switch (a) {
             case 0: snprintf(s, 256, "data output (lists, floats, symbols)"); break;
@@ -541,7 +743,9 @@ static void dataframe_read(t_dataframe *x, t_symbol *s) {
         std::string ext = get_extension(path);
 
         bool ok = false;
-        if (ext == "json") {
+        if (ext == "xlsx") {
+            ok = read_xlsx(x, path);
+        } else if (ext == "json") {
             x->store->df = ULDataFrame();
             x->store->col_types.clear();
             x->store->df.read(path.c_str(), io_format::json);
@@ -573,7 +777,9 @@ static void dataframe_write(t_dataframe *x, t_symbol *s) {
         std::string ext = get_extension(path);
 
         bool ok = false;
-        if (ext == "json") {
+        if (ext == "xlsx") {
+            ok = write_xlsx(x, path);
+        } else if (ext == "json") {
             x->store->df.write<double, long, std::string>(
                 path.c_str(), io_format::json);
             ok = true;
@@ -996,5 +1202,319 @@ static void dataframe_sel(t_dataframe *x, t_symbol *s, long argc, t_atom *argv) 
         outlet_bang(x->outlet_info);
     } catch (const std::exception &e) {
         post_error(x, "dataframe: sel failed: %s", e.what());
+    }
+}
+
+// --------------------------------------------------------------------------
+// Sorting
+// --------------------------------------------------------------------------
+
+// sort <col> [asc|desc]
+// Sorts the DataFrame in-place by the given column.
+// Default direction is ascending.
+static void dataframe_sort(t_dataframe *x, t_symbol *s, long argc, t_atom *argv) {
+    if (argc < 1) {
+        post_error(x, "dataframe: sort requires <col> [asc|desc]");
+        return;
+    }
+
+    t_symbol *col_sym = atom_getsym(argv);
+    const char *col_name = col_sym->s_name;
+
+    if (!has_col(x, col_name)) {
+        post_error(x, "dataframe: column '%s' not found", col_name);
+        return;
+    }
+
+    sort_spec dir = sort_spec::ascen;
+    if (argc >= 2 && atom_gettype(argv + 1) == A_SYM) {
+        std::string dir_str(atom_getsym(argv + 1)->s_name);
+        if (dir_str == "desc" || dir_str == "descending")
+            dir = sort_spec::desce;
+    }
+
+    try {
+        auto ct = get_col_type(x, col_name);
+        switch (ct) {
+            case col_type::DOUBLE:
+                x->store->df.sort<double, double, long, std::string>(
+                    col_name, dir);
+                break;
+            case col_type::LONG:
+                x->store->df.sort<long, double, long, std::string>(
+                    col_name, dir);
+                break;
+            case col_type::STRING:
+                x->store->df.sort<std::string, double, long, std::string>(
+                    col_name, dir);
+                break;
+        }
+
+        post_info(x, "dataframe: sorted by '%s' %s", col_name,
+                  dir == sort_spec::ascen ? "ascending" : "descending");
+        outlet_bang(x->outlet_info);
+    } catch (const std::exception &e) {
+        post_error(x, "dataframe: sort failed: %s", e.what());
+    }
+}
+
+// --------------------------------------------------------------------------
+// Groupby
+// --------------------------------------------------------------------------
+
+// groupby <group_col> <agg> <value_col>
+// agg: sum, mean, count, min, max
+// Groups by group_col, applies agg to value_col.
+// Replaces current DataFrame with the grouped result.
+// The result has one row per unique group value.
+static void dataframe_groupby(t_dataframe *x, t_symbol *s, long argc, t_atom *argv) {
+    if (argc < 3) {
+        post_error(x, "dataframe: groupby requires <group_col> <agg> <value_col>");
+        return;
+    }
+
+    const char *group_col = atom_getsym(argv)->s_name;
+    const char *agg_name = atom_getsym(argv + 1)->s_name;
+    const char *value_col = atom_getsym(argv + 2)->s_name;
+
+    if (!has_col(x, group_col)) {
+        post_error(x, "dataframe: column '%s' not found", group_col);
+        return;
+    }
+    if (!has_col(x, value_col)) {
+        post_error(x, "dataframe: column '%s' not found", value_col);
+        return;
+    }
+
+    auto val_ct = get_col_type(x, value_col);
+    std::string agg(agg_name);
+
+    // count works on any type; other aggs require numeric
+    if (agg != "count" && val_ct != col_type::DOUBLE) {
+        post_error(x, "dataframe: groupby %s requires a double column", agg_name);
+        return;
+    }
+
+    try {
+        auto &store = *x->store;
+        auto grp_ct = get_col_type(x, group_col);
+        size_t nrows = store.df.get_index().size();
+
+        // Build group mapping: group_key -> list of row indices
+        // Use string keys for simplicity (works for all types)
+        std::vector<std::string> group_keys(nrows);
+        for (size_t i = 0; i < nrows; i++) {
+            switch (grp_ct) {
+                case col_type::DOUBLE: {
+                    auto &col = store.df.get_column<double>(group_col);
+                    group_keys[i] = std::to_string(col[i]);
+                    break;
+                }
+                case col_type::LONG: {
+                    auto &col = store.df.get_column<long>(group_col);
+                    group_keys[i] = std::to_string(col[i]);
+                    break;
+                }
+                case col_type::STRING: {
+                    auto &col = store.df.get_column<std::string>(group_col);
+                    group_keys[i] = col[i];
+                    break;
+                }
+            }
+        }
+
+        // Collect unique groups in order of first appearance
+        std::vector<std::string> unique_keys;
+        std::unordered_map<std::string, std::vector<size_t>> groups;
+        for (size_t i = 0; i < nrows; i++) {
+            auto &key = group_keys[i];
+            if (groups.find(key) == groups.end())
+                unique_keys.push_back(key);
+            groups[key].push_back(i);
+        }
+
+        size_t ngroups = unique_keys.size();
+
+        // Compute aggregation per group
+        std::vector<double> results(ngroups);
+
+        if (agg == "count") {
+            for (size_t g = 0; g < ngroups; g++)
+                results[g] = static_cast<double>(groups[unique_keys[g]].size());
+        } else {
+            auto &val_col_data = store.df.get_column<double>(value_col);
+
+            for (size_t g = 0; g < ngroups; g++) {
+                auto &indices = groups[unique_keys[g]];
+                double acc = 0.0;
+
+                if (agg == "sum") {
+                    for (auto idx : indices) acc += val_col_data[idx];
+                    results[g] = acc;
+                } else if (agg == "mean") {
+                    for (auto idx : indices) acc += val_col_data[idx];
+                    results[g] = acc / static_cast<double>(indices.size());
+                } else if (agg == "min") {
+                    acc = val_col_data[indices[0]];
+                    for (size_t j = 1; j < indices.size(); j++)
+                        acc = std::min(acc, val_col_data[indices[j]]);
+                    results[g] = acc;
+                } else if (agg == "max") {
+                    acc = val_col_data[indices[0]];
+                    for (size_t j = 1; j < indices.size(); j++)
+                        acc = std::max(acc, val_col_data[indices[j]]);
+                    results[g] = acc;
+                } else {
+                    post_error(x, "dataframe: unknown aggregation '%s' "
+                               "(use sum, mean, count, min, max)", agg_name);
+                    return;
+                }
+            }
+        }
+
+        // Build new DataFrame
+        ULDataFrame new_df;
+        std::vector<unsigned long> idx(ngroups);
+        for (size_t i = 0; i < ngroups; i++) idx[i] = static_cast<unsigned long>(i);
+        new_df.load_index(std::move(idx));
+
+        std::unordered_map<std::string, col_type> new_types;
+
+        // Load group column
+        switch (grp_ct) {
+            case col_type::DOUBLE: {
+                std::vector<double> gv(ngroups);
+                auto &src = store.df.get_column<double>(group_col);
+                for (size_t g = 0; g < ngroups; g++)
+                    gv[g] = src[groups[unique_keys[g]][0]];
+                new_df.load_column(group_col, std::move(gv));
+                new_types[group_col] = col_type::DOUBLE;
+                break;
+            }
+            case col_type::LONG: {
+                std::vector<long> gv(ngroups);
+                auto &src = store.df.get_column<long>(group_col);
+                for (size_t g = 0; g < ngroups; g++)
+                    gv[g] = src[groups[unique_keys[g]][0]];
+                new_df.load_column(group_col, std::move(gv));
+                new_types[group_col] = col_type::LONG;
+                break;
+            }
+            case col_type::STRING: {
+                std::vector<std::string> gv(ngroups);
+                for (size_t g = 0; g < ngroups; g++)
+                    gv[g] = unique_keys[g];
+                new_df.load_column(group_col, std::move(gv));
+                new_types[group_col] = col_type::STRING;
+                break;
+            }
+        }
+
+        // Load aggregated value column
+        new_df.load_column(value_col, std::move(results));
+        new_types[value_col] = col_type::DOUBLE;
+
+        store.df = std::move(new_df);
+        store.col_types = std::move(new_types);
+
+        post_info(x, "dataframe: groupby '%s' %s '%s': %zu groups",
+                  group_col, agg_name, value_col, ngroups);
+        outlet_bang(x->outlet_info);
+    } catch (const std::exception &e) {
+        post_error(x, "dataframe: groupby failed: %s", e.what());
+    }
+}
+
+// --------------------------------------------------------------------------
+// Join
+// --------------------------------------------------------------------------
+
+// join <other_name> <col> [inner|left|right|outer]
+// Joins this DataFrame with another named instance by a shared column.
+// Default join type is inner.
+static void dataframe_join(t_dataframe *x, t_symbol *s, long argc, t_atom *argv) {
+    if (argc < 2) {
+        post_error(x, "dataframe: join requires <other_name> <col> [inner|left|right|outer]");
+        return;
+    }
+
+    t_symbol *other_sym = atom_getsym(argv);
+    const char *col_name = atom_getsym(argv + 1)->s_name;
+
+    // Look up the other DataFrame in the registry
+    std::shared_ptr<DataFrameStore> other_store;
+    {
+        std::lock_guard<std::mutex> lock(g_registry_mutex);
+        auto it = g_registry.find(other_sym);
+        if (it == g_registry.end()) {
+            post_error(x, "dataframe: no instance named '%s'", other_sym->s_name);
+            return;
+        }
+        other_store = it->second;
+    }
+
+    if (other_store.get() == x->store.get()) {
+        post_error(x, "dataframe: cannot join with self");
+        return;
+    }
+
+    // Check column exists in both
+    if (!has_col(x, col_name)) {
+        post_error(x, "dataframe: column '%s' not found in '%s'",
+                   col_name, x->name->s_name);
+        return;
+    }
+    if (other_store->col_types.find(col_name) == other_store->col_types.end()) {
+        post_error(x, "dataframe: column '%s' not found in '%s'",
+                   col_name, other_sym->s_name);
+        return;
+    }
+
+    // Parse join policy
+    join_policy jp = join_policy::inner_join;
+    if (argc >= 3 && atom_gettype(argv + 2) == A_SYM) {
+        std::string jp_str(atom_getsym(argv + 2)->s_name);
+        if (jp_str == "left") jp = join_policy::left_join;
+        else if (jp_str == "right") jp = join_policy::right_join;
+        else if (jp_str == "outer") jp = join_policy::left_right_join;
+    }
+
+    try {
+        auto col_ct = get_col_type(x, col_name);
+        auto other_col_ct = other_store->col_types.at(col_name);
+
+        if (col_ct != other_col_ct) {
+            post_error(x, "dataframe: column '%s' has different types in the two DataFrames",
+                       col_name);
+            return;
+        }
+
+        ULDataFrame joined;
+
+        switch (col_ct) {
+            case col_type::DOUBLE:
+                joined = x->store->df.join_by_column<ULDataFrame, double,
+                    double, long, std::string>(other_store->df, col_name, jp);
+                break;
+            case col_type::LONG:
+                joined = x->store->df.join_by_column<ULDataFrame, long,
+                    double, long, std::string>(other_store->df, col_name, jp);
+                break;
+            case col_type::STRING:
+                joined = x->store->df.join_by_column<ULDataFrame, std::string,
+                    double, long, std::string>(other_store->df, col_name, jp);
+                break;
+        }
+
+        x->store->df = std::move(joined);
+        detect_column_types(x);
+
+        auto nrows = x->store->df.get_index().size();
+        auto ncols = x->store->col_types.size();
+        post_info(x, "dataframe: joined with '%s' on '%s': %zu rows x %zu columns",
+                  other_sym->s_name, col_name, nrows, ncols);
+        outlet_bang(x->outlet_info);
+    } catch (const std::exception &e) {
+        post_error(x, "dataframe: join failed: %s", e.what());
     }
 }

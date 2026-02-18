@@ -46,13 +46,35 @@
             },
             {
                 "box": {
+                    "id": "obj-read-xlsx",
+                    "maxclass": "message",
+                    "numinlets": 2,
+                    "numoutlets": 1,
+                    "outlettype": [ "" ],
+                    "patching_rect": [ 237.0, 102.0, 105.0, 22.0 ],
+                    "text": "read sample.xlsx"
+                }
+            },
+            {
+                "box": {
                     "id": "obj-write",
                     "maxclass": "message",
                     "numinlets": 2,
                     "numoutlets": 1,
                     "outlettype": [ "" ],
-                    "patching_rect": [ 395.0, 102.0, 220.0, 22.0 ],
+                    "patching_rect": [ 395.0, 102.0, 110.0, 22.0 ],
                     "text": "write /tmp/out.csv"
+                }
+            },
+            {
+                "box": {
+                    "id": "obj-write-xlsx",
+                    "maxclass": "message",
+                    "numinlets": 2,
+                    "numoutlets": 1,
+                    "outlettype": [ "" ],
+                    "patching_rect": [ 520.0, 102.0, 115.0, 22.0 ],
+                    "text": "write /tmp/out.xlsx"
                 }
             },
             {
@@ -247,7 +269,7 @@
                     "numinlets": 1,
                     "numoutlets": 0,
                     "patching_rect": [ 110.0, 267.0, 200.0, 20.0 ],
-                    "text": "--- Filtering ---"
+                    "text": "--- Filtering & Sorting ---"
                 }
             },
             {
@@ -263,12 +285,65 @@
             },
             {
                 "box": {
+                    "id": "obj-sort-asc",
+                    "maxclass": "message",
+                    "numinlets": 2,
+                    "numoutlets": 1,
+                    "outlettype": [ "" ],
+                    "patching_rect": [ 260.0, 292.0, 80.0, 22.0 ],
+                    "text": "sort score"
+                }
+            },
+            {
+                "box": {
+                    "id": "obj-sort-desc",
+                    "maxclass": "message",
+                    "numinlets": 2,
+                    "numoutlets": 1,
+                    "outlettype": [ "" ],
+                    "patching_rect": [ 355.0, 292.0, 105.0, 22.0 ],
+                    "text": "sort score desc"
+                }
+            },
+            {
+                "box": {
+                    "id": "obj-comment-groupby",
+                    "maxclass": "comment",
+                    "numinlets": 1,
+                    "numoutlets": 0,
+                    "patching_rect": [ 110.0, 322.0, 200.0, 20.0 ],
+                    "text": "--- Groupby & Join ---"
+                }
+            },
+            {
+                "box": {
+                    "id": "obj-groupby",
+                    "maxclass": "message",
+                    "numinlets": 2,
+                    "numoutlets": 1,
+                    "outlettype": [ "" ],
+                    "patching_rect": [ 125.0, 347.0, 155.0, 22.0 ],
+                    "text": "groupby grade mean score"
+                }
+            },
+            {
+                "box": {
+                    "id": "obj-comment-join-syntax",
+                    "maxclass": "comment",
+                    "numinlets": 1,
+                    "numoutlets": 0,
+                    "patching_rect": [ 442.5, 348.0, 300.0, 20.0 ],
+                    "text": "join <other_df> <col> [inner|left|right|outer]"
+                }
+            },
+            {
+                "box": {
                     "id": "obj-df",
                     "maxclass": "newobj",
                     "numinlets": 1,
                     "numoutlets": 2,
                     "outlettype": [ "", "" ],
-                    "patching_rect": [ 295.0, 367.0, 273.0, 22.0 ],
+                    "patching_rect": [ 295.0, 407.0, 273.0, 22.0 ],
                     "text": "dataframe mydata"
                 }
             },
@@ -279,7 +354,7 @@
                     "numinlets": 2,
                     "numoutlets": 1,
                     "outlettype": [ "" ],
-                    "patching_rect": [ 133.0, 471.0, 181.0, 22.0 ]
+                    "patching_rect": [ 133.0, 502.0, 181.0, 22.0 ]
                 }
             },
             {
@@ -289,7 +364,8 @@
                     "numinlets": 2,
                     "numoutlets": 1,
                     "outlettype": [ "" ],
-                    "patching_rect": [ 385.0, 471.0, 183.0, 22.0 ]
+                    "patching_rect": [ 385.0, 502.0, 183.0, 22.0 ],
+                    "text": "bang"
                 }
             },
             {
@@ -299,7 +375,7 @@
                     "numinlets": 1,
                     "numoutlets": 1,
                     "outlettype": [ "bang" ],
-                    "patching_rect": [ 133.0, 411.0, 58.0, 22.0 ],
+                    "patching_rect": [ 133.0, 442.0, 58.0, 22.0 ],
                     "text": "loadbang"
                 }
             },
@@ -310,7 +386,7 @@
                     "numinlets": 2,
                     "numoutlets": 1,
                     "outlettype": [ "" ],
-                    "patching_rect": [ 133.0, 443.0, 29.5, 22.0 ],
+                    "patching_rect": [ 133.0, 474.0, 29.5, 22.0 ],
                     "text": "set"
                 }
             },
@@ -321,7 +397,7 @@
                     "numinlets": 2,
                     "numoutlets": 1,
                     "outlettype": [ "" ],
-                    "patching_rect": [ 385.0, 441.0, 29.5, 22.0 ],
+                    "patching_rect": [ 385.0, 472.0, 29.5, 22.0 ],
                     "text": "set"
                 }
             },
@@ -332,7 +408,7 @@
                     "numinlets": 1,
                     "numoutlets": 1,
                     "outlettype": [ "bang" ],
-                    "patching_rect": [ 385.0, 411.0, 58.0, 22.0 ],
+                    "patching_rect": [ 385.0, 442.0, 58.0, 22.0 ],
                     "text": "loadbang"
                 }
             },
@@ -342,7 +418,7 @@
                     "maxclass": "comment",
                     "numinlets": 1,
                     "numoutlets": 0,
-                    "patching_rect": [ 133.0, 503.0, 150.0, 20.0 ],
+                    "patching_rect": [ 133.0, 534.0, 150.0, 20.0 ],
                     "text": "data outlet (left)"
                 }
             },
@@ -352,7 +428,7 @@
                     "maxclass": "comment",
                     "numinlets": 1,
                     "numoutlets": 0,
-                    "patching_rect": [ 385.0, 501.0, 150.0, 20.0 ],
+                    "patching_rect": [ 385.0, 532.0, 150.0, 20.0 ],
                     "text": "info outlet (right)"
                 }
             }
@@ -409,6 +485,12 @@
             {
                 "patchline": {
                     "destination": [ "obj-df", 0 ],
+                    "source": [ "obj-groupby", 0 ]
+                }
+            },
+            {
+                "patchline": {
+                    "destination": [ "obj-df", 0 ],
                     "source": [ "obj-head", 0 ]
                 }
             },
@@ -457,6 +539,12 @@
             {
                 "patchline": {
                     "destination": [ "obj-df", 0 ],
+                    "source": [ "obj-read-xlsx", 0 ]
+                }
+            },
+            {
+                "patchline": {
+                    "destination": [ "obj-df", 0 ],
                     "source": [ "obj-sel", 0 ]
                 }
             },
@@ -481,6 +569,18 @@
             {
                 "patchline": {
                     "destination": [ "obj-df", 0 ],
+                    "source": [ "obj-sort-asc", 0 ]
+                }
+            },
+            {
+                "patchline": {
+                    "destination": [ "obj-df", 0 ],
+                    "source": [ "obj-sort-desc", 0 ]
+                }
+            },
+            {
+                "patchline": {
+                    "destination": [ "obj-df", 0 ],
                     "source": [ "obj-std", 0 ]
                 }
             },
@@ -500,6 +600,12 @@
                 "patchline": {
                     "destination": [ "obj-df", 0 ],
                     "source": [ "obj-write", 0 ]
+                }
+            },
+            {
+                "patchline": {
+                    "destination": [ "obj-df", 0 ],
+                    "source": [ "obj-write-xlsx", 0 ]
                 }
             }
         ],

@@ -25,10 +25,17 @@ target_include_directories(
     ${PROJECT_NAME}
     PUBLIC
     ${CMAKE_SOURCE_DIR}/source/thirdparty/DataFrame/include
+    ${THIRDPARTY_INCLUDE}
+    ${CMAKE_BINARY_DIR}/thirdparty/OpenXLSX/OpenXLSX
 )
 
 find_package(Threads REQUIRED)
-target_link_libraries(${PROJECT_NAME} PRIVATE Threads::Threads)
+target_link_libraries(${PROJECT_NAME} PRIVATE
+    Threads::Threads
+    ${THIRDPARTY_LIB}/libOpenXLSX.a
+    ${THIRDPARTY_LIB}/libxlsxwriter.a
+    -lz
+)
 
 # DataFrame uses std::to_chars for floating point which requires macOS 13.3+
 set_target_properties(${PROJECT_NAME} PROPERTIES
