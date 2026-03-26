@@ -65,10 +65,11 @@ jobs:
 
     - name: Build externals on Windows
       run: |
-        mkdir build
+        mkdir -p build
         cd build
         cmake ..
         cmake --build . --config Release
+      shell: bash
 
     - name: Upload win64 externals
       uses: actions/upload-artifact@v4
