@@ -30,11 +30,15 @@ target_include_directories(
 )
 
 find_package(Threads REQUIRED)
+find_library(OPENXLSX_LIB_TEST NAMES OpenXLSX PATHS ${THIRDPARTY_LIB} NO_DEFAULT_PATH REQUIRED)
+find_library(XLSXWRITER_LIB_TEST NAMES xlsxwriter PATHS ${THIRDPARTY_LIB} NO_DEFAULT_PATH REQUIRED)
+find_package(ZLIB REQUIRED)
+
 target_link_libraries(${PROJECT_NAME} PRIVATE
     Threads::Threads
-    ${THIRDPARTY_LIB}/libOpenXLSX.a
-    ${THIRDPARTY_LIB}/libxlsxwriter.a
-    -lz
+    ${OPENXLSX_LIB_TEST}
+    ${XLSXWRITER_LIB_TEST}
+    ZLIB::ZLIB
 )
 
 # DataFrame uses std::to_chars for floating point which requires macOS 13.3+

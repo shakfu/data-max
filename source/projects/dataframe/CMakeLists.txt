@@ -27,11 +27,15 @@ target_include_directories(
 )
 
 find_package(Threads REQUIRED)
+find_library(OPENXLSX_LIB NAMES OpenXLSX PATHS ${THIRDPARTY_LIB} NO_DEFAULT_PATH REQUIRED)
+find_library(XLSXWRITER_LIB_DF NAMES xlsxwriter PATHS ${THIRDPARTY_LIB} NO_DEFAULT_PATH REQUIRED)
+find_package(ZLIB REQUIRED)
+
 target_link_libraries(${PROJECT_NAME} PRIVATE
     Threads::Threads
-    ${THIRDPARTY_LIB}/libOpenXLSX.a
-    ${THIRDPARTY_LIB}/libxlsxwriter.a
-    -lz
+    ${OPENXLSX_LIB}
+    ${XLSXWRITER_LIB_DF}
+    ZLIB::ZLIB
 )
 
 include(${CMAKE_CURRENT_SOURCE_DIR}/../../max-sdk-base/script/max-posttarget.cmake)

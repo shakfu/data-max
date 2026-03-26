@@ -16,6 +16,9 @@ set(THIRDPARTY_INSTALL ${CMAKE_BINARY_DIR}/thirdparty/install)
 set(THIRDPARTY_INCLUDE ${THIRDPARTY_INSTALL}/include)
 set(THIRDPARTY_LIB ${THIRDPARTY_INSTALL}/lib)
 
+# allow find_package to locate thirdparty dependencies (e.g. ZLIB)
+list(APPEND CMAKE_PREFIX_PATH ${THIRDPARTY_INSTALL})
+
 
 
 # use ccache if available

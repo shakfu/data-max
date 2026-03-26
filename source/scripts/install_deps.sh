@@ -5,10 +5,55 @@ THIRDPARTY=${CWD}/build/thirdparty
 PREFIX=${THIRDPARTY}/install
 LIBXLSXWRITER_VERSION=v1.2.0
 LIBOPENXLSX_VERSION=v0.3.2
+ZLIB_VERSION=v1.3.1
+
+# detect platform
+case "$(uname -s)" in
+	MINGW*|MSYS*|CYGWIN*|Windows_NT)
+		IS_WINDOWS=1
+		LIB_EXT=".lib"
+		LIB_PREFIX=""
+		# use static CRT (/MT) to match the Max SDK
+		PLATFORM_CMAKE_FLAGS="-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded -DCMAKE_POLICY_DEFAULT_CMP0091=NEW"
+		;;
+	*)
+		IS_WINDOWS=0
+		LIB_EXT=".a"
+		LIB_PREFIX="lib"
+		PLATFORM_CMAKE_FLAGS=""
+		;;
+esac
 
 function setup() {
 	mkdir -p ${PREFIX}/include && \
 	mkdir -p ${PREFIX}/lib
+}
+
+function install_zlib() {
+	# on Unix, zlib is a system library -- only build on Windows
+	if [ "${IS_WINDOWS}" -eq 0 ]; then
+		return 0
+	fi
+	VERSION=${ZLIB_VERSION}
+	REPO=https://github.com/madler/zlib.git
+	SRC=${THIRDPARTY}/zlib
+	BUILD=${SRC}/build
+	if [ ! -f ${PREFIX}/lib/zlibstatic.lib ] && [ ! -f ${PREFIX}/lib/zlibstaticd.lib ]; then
+		rm -rf ${SRC} && \
+		mkdir -p build/thirdparty && \
+		git clone -b "${VERSION}" --depth=1 ${REPO} ${SRC} && \
+		mkdir -p ${BUILD} && \
+		cd ${BUILD} && \
+		cmake .. \
+			${PLATFORM_CMAKE_FLAGS} \
+			-DCMAKE_INSTALL_PREFIX=${PREFIX} \
+			-DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+			&& \
+		cmake --build . --config Release && \
+		cmake --build . --target install --config Release
+	else
+		echo "zlib already built"
+	fi
 }
 
 function install_libxlsxwriter() {
@@ -16,7 +61,7 @@ function install_libxlsxwriter() {
 	REPO=https://github.com/jmcnamara/libxlsxwriter
 	SRC=${THIRDPARTY}/libxlsxwriter
 	BUILD=${SRC}/build
-    if [ ! -f ${THIRDPARTY}/install/lib/libxlsxwriter.a ]; then
+    if [ ! -f ${PREFIX}/lib/${LIB_PREFIX}xlsxwriter${LIB_EXT} ]; then
     	rm -rf ${THIRDPARTY}/libxlsxwriter && \
     	mkdir -p build/thirdparty && \
 		git clone -b "${VERSION}" --depth=1 ${REPO} ${SRC} && \
@@ -34,12 +79,14 @@ function install_libxlsxwriter() {
 			-DIOAPI_NO_64=OFF \
 			-DUSE_DTOA_LIBRARY=OFF \
 			-DCMAKE_INSTALL_PREFIX=${PREFIX} \
+			-DCMAKE_PREFIX_PATH=${PREFIX} \
 			-DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+			${PLATFORM_CMAKE_FLAGS} \
 			&& \
 		cmake --build . --config Release && \
-		cmake --build . --target install
+		cmake --build . --target install --config Release
 	else
-		echo "libxlsxwriter.a already built"
+		echo "xlsxwriter already built"
 	fi
 }
 
@@ -48,7 +95,7 @@ function install_openxlsx() {
 	REPO=https://github.com/troldal/OpenXLSX.git
 	SRC=${THIRDPARTY}/OpenXLSX
 	BUILD=${SRC}/build
-    if [ ! -f ${THIRDPARTY}/install/lib/libOpenXLSX.a ]; then
+    if [ ! -f ${PREFIX}/lib/${LIB_PREFIX}OpenXLSX${LIB_EXT} ]; then
     	rm -rf ${THIRDPARTY}/OpenXLSX && \
     	mkdir -p build/thirdparty && \
 		git clone --depth=1 ${REPO} ${SRC} && \
@@ -62,18 +109,18 @@ function install_openxlsx() {
 			-DOPENXLSX_ENABLE_LIBZIP=OFF \
 			-DCMAKE_INSTALL_PREFIX=${PREFIX} \
 			-DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+			${PLATFORM_CMAKE_FLAGS} \
 			&& \
 		cmake --build . --config Release && \
-		cmake --build . --target install
+		cmake --build . --target install --config Release
 	else
-		echo "libOpenXLSX.a already built"
+		echo "OpenXLSX already built"
 	fi
 }
 
 
 
 setup && \
+	install_zlib && \
 	install_libxlsxwriter && \
 	install_openxlsx
-
-

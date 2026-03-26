@@ -26,11 +26,14 @@ add_library(
 )
 
 
+find_library(XLSXWRITER_LIB NAMES xlsxwriter PATHS ${THIRDPARTY_LIB} NO_DEFAULT_PATH REQUIRED)
+find_package(ZLIB REQUIRED)
+
 target_link_libraries(
 	${PROJECT_NAME}
 	PRIVATE
-	${THIRDPARTY_LIB}/libxlsxwriter.a
-	-lz
+	${XLSXWRITER_LIB}
+	ZLIB::ZLIB
 )
 
 
