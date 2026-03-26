@@ -19,6 +19,8 @@ add_executable(
 
 if(WIN32)
     target_compile_definitions(${PROJECT_NAME} PRIVATE NOMINMAX _USE_MATH_DEFINES)
+    # match static CRT (/MT) used by Max SDK and thirdparty libs
+    set_property(TARGET ${PROJECT_NAME} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()
 
 target_sources(${PROJECT_NAME} PRIVATE
