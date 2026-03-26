@@ -18,7 +18,7 @@ add_executable(
 )
 
 if(WIN32)
-    target_compile_definitions(${PROJECT_NAME} PRIVATE NOMINMAX)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE NOMINMAX _USE_MATH_DEFINES)
 endif()
 
 target_sources(${PROJECT_NAME} PRIVATE
