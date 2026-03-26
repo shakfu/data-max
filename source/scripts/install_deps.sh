@@ -79,6 +79,12 @@ function install_libxlsxwriter() {
 		git clone -b "${VERSION}" --depth=1 ${REPO} ${SRC} && \
 		mkdir -p ${BUILD} && \
 		cd ${BUILD} && \
+		# USE_MEM_FILE requires fmemopen/open_memstream (POSIX-only)
+		if [ "${IS_WINDOWS}" -eq 1 ]; then
+			USE_MEM_FILE_FLAG="-DUSE_MEM_FILE=OFF"
+		else
+			USE_MEM_FILE_FLAG="-DUSE_MEM_FILE=ON"
+		fi
 		cmake .. \
 			-DBUILD_TESTS=OFF \
 			-DBUILD_EXAMPLES=OFF \
@@ -87,7 +93,7 @@ function install_libxlsxwriter() {
 			-DUSE_STANDARD_TMPFILE=OFF \
 			-DUSE_NO_MD5=OFF \
 			-DUSE_OPENSSL_MD5=OFF \
-			-DUSE_MEM_FILE=ON \
+			${USE_MEM_FILE_FLAG} \
 			-DIOAPI_NO_64=OFF \
 			-DUSE_DTOA_LIBRARY=OFF \
 			-DCMAKE_INSTALL_PREFIX=${PREFIX} \

@@ -15,6 +15,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+### Changed
+
+- CI workflow builds cross-platform Max Package (macOS universal + Windows 64-bit) as downloadable artifact
+- CMakeLists use `find_library()` and `find_package(ZLIB)` instead of hardcoded `.a` paths for cross-platform linking
+- `install_deps.sh` supports Windows (MSVC static CRT, zlib build, platform-aware library detection)
+- `install_deps.sh` supports universal (x86_64+arm64) thirdparty builds via `BUILD_UNIVERSAL` env var
+- macOS CI default bumped to `macos-15` (Xcode 16+ required for C++23 `std::ranges::contains`)
+- `NOMINMAX` defined on Windows builds to prevent `min`/`max` macro conflicts with DataFrame library
+- libxlsxwriter built with `USE_MEM_FILE=OFF` on Windows (POSIX `fmemopen`/`open_memstream` unavailable)
+
 ### Added
 
 - `corr <col1> <col2>` message for Pearson correlation between two numeric columns

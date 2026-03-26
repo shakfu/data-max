@@ -14,6 +14,10 @@ file(GLOB PROJECT_SRC "*.h" "*.c" "*.cpp")
 
 add_library(${PROJECT_NAME} MODULE ${PROJECT_SRC})
 
+if(WIN32)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE NOMINMAX)
+endif()
+
 target_sources(${PROJECT_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/source/thirdparty/DataFrame/src/Utils/DateTime.cc
 )

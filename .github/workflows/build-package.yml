@@ -5,12 +5,11 @@ on:
       macos_version:
         type: choice
         description: Select MacOS version
-        default: macos-14
+        default: macos-15
         required: true
         options:
           - macos-latest
           - macos-15
-          - macos-14
 
       windows_version:
         type: choice
