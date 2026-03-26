@@ -7,20 +7,32 @@ LIBXLSXWRITER_VERSION=v1.2.0
 LIBOPENXLSX_VERSION=v0.3.2
 ZLIB_VERSION=v1.3.1
 
-# detect platform
+# detect platform and set cmake flags
+EXTRA_CMAKE_ARGS=()
+
 case "$(uname -s)" in
 	MINGW*|MSYS*|CYGWIN*|Windows_NT)
 		IS_WINDOWS=1
 		LIB_EXT=".lib"
 		LIB_PREFIX=""
 		# use static CRT (/MT) to match the Max SDK
-		PLATFORM_CMAKE_FLAGS="-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded -DCMAKE_POLICY_DEFAULT_CMP0091=NEW"
+		EXTRA_CMAKE_ARGS+=("-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded")
+		EXTRA_CMAKE_ARGS+=("-DCMAKE_POLICY_DEFAULT_CMP0091=NEW")
+		;;
+	Darwin*)
+		IS_WINDOWS=0
+		LIB_EXT=".a"
+		LIB_PREFIX="lib"
+		EXTRA_CMAKE_ARGS+=("-DCMAKE_OSX_DEPLOYMENT_TARGET=10.15")
+		# BUILD_UNIVERSAL env var: build thirdparty libs as universal (x86_64+arm64)
+		if [ "${BUILD_UNIVERSAL}" = "YES" ] || [ "${BUILD_UNIVERSAL}" = "1" ]; then
+			EXTRA_CMAKE_ARGS+=("-DCMAKE_OSX_ARCHITECTURES=x86_64;arm64")
+		fi
 		;;
 	*)
 		IS_WINDOWS=0
 		LIB_EXT=".a"
 		LIB_PREFIX="lib"
-		PLATFORM_CMAKE_FLAGS=""
 		;;
 esac
 
@@ -45,7 +57,7 @@ function install_zlib() {
 		mkdir -p ${BUILD} && \
 		cd ${BUILD} && \
 		cmake .. \
-			${PLATFORM_CMAKE_FLAGS} \
+			"${EXTRA_CMAKE_ARGS[@]}" \
 			-DCMAKE_INSTALL_PREFIX=${PREFIX} \
 			-DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
 			&& \
@@ -81,7 +93,7 @@ function install_libxlsxwriter() {
 			-DCMAKE_INSTALL_PREFIX=${PREFIX} \
 			-DCMAKE_PREFIX_PATH=${PREFIX} \
 			-DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
-			${PLATFORM_CMAKE_FLAGS} \
+			"${EXTRA_CMAKE_ARGS[@]}" \
 			&& \
 		cmake --build . --config Release && \
 		cmake --build . --target install --config Release
@@ -109,7 +121,7 @@ function install_openxlsx() {
 			-DOPENXLSX_ENABLE_LIBZIP=OFF \
 			-DCMAKE_INSTALL_PREFIX=${PREFIX} \
 			-DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
-			${PLATFORM_CMAKE_FLAGS} \
+			"${EXTRA_CMAKE_ARGS[@]}" \
 			&& \
 		cmake --build . --config Release && \
 		cmake --build . --target install --config Release
