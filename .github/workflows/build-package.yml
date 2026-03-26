@@ -104,10 +104,11 @@ jobs:
       with:
         name: data-max
         path: |
+            examples
             externals
             help
             media
             patchers
-            LICENSE.md
+            LICENSE
             README.md
             remove_macos_externals_quarantine.sh
