@@ -15,6 +15,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+### Fixed
+
+- Windows: link against static zlib (`zlibstatic.lib`) instead of dynamic `zlib.dll` to fix Error 126 when loading externals from a package
+
 ### Changed
 
 - CI workflow builds cross-platform Max Package (macOS universal + Windows 64-bit) as downloadable artifact

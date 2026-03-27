@@ -19,6 +19,12 @@ set(THIRDPARTY_LIB ${THIRDPARTY_INSTALL}/lib)
 # allow find_package to locate thirdparty dependencies (e.g. ZLIB)
 list(APPEND CMAKE_PREFIX_PATH ${THIRDPARTY_INSTALL})
 
+# On Windows, force static zlib to avoid zlib.dll dependency at runtime
+if(WIN32)
+    set(ZLIB_LIBRARY ${THIRDPARTY_LIB}/zlibstatic.lib CACHE FILEPATH "Static zlib" FORCE)
+    set(ZLIB_INCLUDE_DIR ${THIRDPARTY_INCLUDE} CACHE PATH "zlib include" FORCE)
+endif()
+
 
 
 # use ccache if available
