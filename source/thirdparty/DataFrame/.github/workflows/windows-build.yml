@@ -13,7 +13,7 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: CMake set-up
         run: cmake -S . `-DCMAKE_BUILD_TYPE=Release -DHMDF_TESTING=ON -DHMDF_EXAMPLES=ON -DHMDF_BENCHMARKS=ON`
       - name: CMake build

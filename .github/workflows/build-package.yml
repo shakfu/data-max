@@ -26,7 +26,7 @@ jobs:
     runs-on: ${{ github.event.inputs.macos_version }}
     steps:
 
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
       with:
         submodules: 'recursive'
         fetch-depth: '0'
@@ -42,7 +42,7 @@ jobs:
         cmake --build . --config Release
 
     - name: Upload macOS externals
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: macos-externals
         path: |
@@ -53,7 +53,7 @@ jobs:
     runs-on: ${{ github.event.inputs.windows_version }}
     steps:
 
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
       with:
         submodules: 'recursive'
         fetch-depth: '0'
@@ -71,7 +71,7 @@ jobs:
       shell: bash
 
     - name: Upload win64 externals
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: win64-externals
         path: |
@@ -83,16 +83,16 @@ jobs:
     needs: [build-macos, build-windows]
     steps:
 
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Download macOS externals
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v8
       with:
         name: macos-externals
         path: externals
 
     - name: Download Windows externals
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v8
       with:
         name: win64-externals
         path: externals
@@ -100,7 +100,7 @@ jobs:
     - name: Copy scripts to root
       run: cp source/scripts/remove_macos_externals_quarantine.sh .
 
-    - uses: actions/upload-artifact@v4
+    - uses: actions/upload-artifact@v7
       with:
         name: data-max
         path: |
