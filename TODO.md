@@ -1,8 +1,16 @@
 # TODO
 
-## `dataframe` v2 Enhancements
+## Critical
 
-### Done
+## High
+
+## Medium
+
+## Low
+
+## Done
+
+### `dataframe` v2 Enhancements
 
 - [x] XLSX read/write (OpenXLSX + libxlsxwriter)
 - [x] `sort <col> [asc|desc]` -- single-column sort, ascending/descending
